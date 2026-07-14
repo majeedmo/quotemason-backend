@@ -1,6 +1,7 @@
 # Original client quotes contain PII and the undisclosed business name.
 # Only the redacted corpus (corpus/quotes-redacted/) may be committed.
-quotes/
+# Anchored to the repo root: backend/app/quotes/ is code and must be tracked.
+/quotes/
 
 # backend
 backend/.venv/

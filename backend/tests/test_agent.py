@@ -82,6 +82,39 @@ def test_intake_malformed_json_degrades_to_ask(monkeypatch):
     assert "how large" in out["messages"][0].content
 
 
+def test_intake_salvages_json_wrapped_in_prose(monkeypatch):
+    """Seen live 2026-07-14: model emitted a summary, then the fenced JSON.
+    The object must be salvaged (action honored), not echoed to the client."""
+    payload = {"action": "complete", "reply": "Perfect, that's everything I need.",
+               "slots": {"scope": "finished basement"}, "flags": [],
+               "hard_trigger": None}
+    class _Wrapped:
+        def invoke(self, msgs):
+            return SimpleNamespace(content=(
+                "Here's the full picture:\n- **Scope:** finished basement\n\n"
+                "```json\n" + json.dumps(payload, indent=2) + "\n```"))
+    monkeypatch.setattr(nodes, "intake_model", lambda: _Wrapped())
+    out = intake_node({"messages": [HumanMessage("900 sqft, laminate")]})
+    assert out["_action"] == "complete"
+    assert out["slots"] == {"scope": "finished basement"}
+    assert out["messages"][0].content == "Perfect, that's everything I need."
+
+
+def test_intake_degraded_reply_never_leaks_json(monkeypatch):
+    """If no complete object can be parsed, the JSON-ish tail is cut from
+    the client-facing reply."""
+    class _Truncated:
+        def invoke(self, msgs):
+            return SimpleNamespace(content=(
+                'Thanks! Just to confirm the details.\n\n'
+                '{ "action": "complete", "reply": "truncated mid-obj'))
+    monkeypatch.setattr(nodes, "intake_model", lambda: _Truncated())
+    out = intake_node({"messages": [HumanMessage("hi")]})
+    assert out["_action"] == "ask"
+    assert "{" not in out["messages"][0].content
+    assert "Thanks! Just to confirm the details." == out["messages"][0].content
+
+
 # --- retrieve / pricing ------------------------------------------------------
 
 class _FakeRetriever:

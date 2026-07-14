@@ -14,15 +14,34 @@ from app.config import settings
 from app.retrieval import get_retriever
 
 _FENCE = re.compile(r"^```(?:json)?\s*|\s*```$", re.M)
+_JSON_START = re.compile(r'\{\s*"')
 
 
 def _parse_intake(raw: str) -> dict:
+    text = _FENCE.sub("", raw.strip())
     try:
-        return json.loads(_FENCE.sub("", raw.strip()))
+        out = json.loads(text)
+        if isinstance(out, dict):
+            return out
     except json.JSONDecodeError:
-        # Model broke format: treat its text as a plain follow-up question.
-        return {"action": "ask", "reply": raw.strip(), "slots": {},
-                "flags": [], "hard_trigger": None}
+        pass
+    # Model wrapped the JSON in prose (seen live 2026-07-14: summary text,
+    # then the fenced object): salvage the first object that has "action".
+    dec = json.JSONDecoder()
+    for m in _JSON_START.finditer(text):
+        try:
+            obj, _ = dec.raw_decode(text, m.start())
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict) and "action" in obj:
+            return obj
+    # Model broke format: treat its text as a plain follow-up question —
+    # cut before any JSON-ish tail so raw JSON never reaches the client.
+    m = _JSON_START.search(text)
+    reply = (text[: m.start()] if m else text).strip()
+    return {"action": "ask",
+            "reply": reply or "Could you tell me a bit more about your project?",
+            "slots": {}, "flags": [], "hard_trigger": None}
 
 
 def _tag_routing(level: str, categories: list[str]) -> None:
