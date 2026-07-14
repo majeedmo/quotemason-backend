@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -29,6 +30,7 @@ class Settings(BaseSettings):
 
     langsmith_api_key: str = ""
     langsmith_project: str = "quotemason"
+    langsmith_tracing: bool = True  # trace whenever the API key is set
 
     # Comma-separated browser origins allowed to call the API (Next.js dev
     # server by default — 3001 included because Next falls back to it when
@@ -37,3 +39,14 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+# LangChain/LangGraph read tracing config from the process environment, not
+# from Settings — and pydantic only parses .env, it doesn't export it. Without
+# this, LangGraph runs are never traced (the §6 routing-event tags become
+# no-ops) even with a key in .env. Both var spellings for langsmith-sdk
+# compatibility; setdefault so real env vars (e.g. on Render) always win.
+if settings.langsmith_api_key and settings.langsmith_tracing:
+    os.environ.setdefault("LANGSMITH_API_KEY", settings.langsmith_api_key)
+    os.environ.setdefault("LANGSMITH_PROJECT", settings.langsmith_project)
+    os.environ.setdefault("LANGSMITH_TRACING", "true")
+    os.environ.setdefault("LANGCHAIN_TRACING_V2", "true")
