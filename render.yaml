@@ -1,0 +1,47 @@
+# Render Blueprint — QuoteMason backend (FastAPI, native Python runtime; no Docker).
+# The frontend lives in the separate quotemason-frontend repo, deploys to Vercel,
+# and points at this service via NEXT_PUBLIC_API_BASE.
+services:
+  - type: web
+    name: quotemason-api
+    runtime: python
+    plan: free
+    rootDir: backend
+    # Render detects uv.lock and provides uv; --frozen keeps the deploy on the
+    # committed lockfile. Python version comes from backend/.python-version.
+    buildCommand: uv sync --frozen
+    startCommand: uv run uvicorn app.api.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /healthz
+    envVars:
+      # Non-secret config (values committed here on purpose)
+      - key: QDRANT_COLLECTION
+        value: estimator_corpus
+      - key: DRAFTING_MODEL
+        value: anthropic/claude-sonnet-5
+      - key: INTAKE_MODEL
+        value: anthropic/claude-haiku-4.5
+      - key: JUDGE_MODEL
+        value: openai/gpt-5.1
+      - key: LANGSMITH_PROJECT
+        value: quotemason
+      # Set after the Vercel deploy exists (its https URL, comma-separated list)
+      - key: CORS_ORIGINS
+        sync: false
+      # Secrets — sync: false makes the Render dashboard prompt for each value
+      # on blueprint creation; copy them from backend/.env (never committed)
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: QDRANT_URL
+        sync: false
+      - key: QDRANT_API_KEY
+        sync: false
+      - key: TAVILY_API_KEY
+        sync: false
+      - key: UPSTASH_REDIS_URL
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: LANGSMITH_API_KEY
+        sync: false

@@ -1,0 +1,32 @@
+[project]
+name = "quotemason-backend"
+version = "0.1.0"
+description = "QuoteMason (agentic estimation assistant) — backend (LangGraph agent + RAG ingestion/retrieval)"
+requires-python = ">=3.11"
+dependencies = [
+    "langchain-core>=0.3",
+    "langchain-openai>=0.2",
+    "langchain-qdrant>=0.2",
+    "qdrant-client>=1.12",
+    "pydantic-settings>=2.5",
+    "python-frontmatter>=1.1",
+    "langgraph>=1.2.9",
+    "tavily-python>=0.7.26",
+    "langgraph-checkpoint-redis>=0.5.0",
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "psycopg[binary]>=3.2",
+]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.27",
+    "pytest>=8.0",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

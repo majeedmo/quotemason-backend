@@ -1,0 +1,38 @@
+trade,job_size_band,unit,rate_low_cad,rate_high_cad,includes,status,notes
+demolition_and_prep,small_lt_500sqft,lump_sum,1500,3500,strip-out + disposal prep,PLACEHOLDER_OWNER_VERIFY,partially finished basements only; gut jobs price higher
+demolition_and_prep,medium_500_1000sqft,lump_sum,2500,5500,strip-out + disposal prep,PLACEHOLDER_OWNER_VERIFY,
+demolition_and_prep,large_1000_2000sqft,lump_sum,4000,8000,strip-out + disposal prep,PLACEHOLDER_OWNER_VERIFY,
+concrete_cutting_entrance,any,per_opening,4500,8500,door opening cut + steel lintel + header install,PLACEHOLDER_OWNER_VERIFY,below-grade separate entrance excavation priced separately
+concrete_cutting_window,any,per_opening,1800,3200,window opening cut/enlarge + lintel,PLACEHOLDER_OWNER_VERIFY,egress enlargement typical for accessory units
+excavation_below_grade_entrance,any,lump_sum,8000,15000,excavation + stairs + drainage + guard,PLACEHOLDER_OWNER_VERIFY,huge variance by soil/depth/access; always site-verify
+window_well_install,any,per_well,900,1800,well + gravel + drain to weeper/footing,PLACEHOLDER_OWNER_VERIFY,grounded in scope lines from real quotes; rate itself unverified
+framing,small_lt_500sqft,per_sqft_floor,4.50,6.50,wood stud partitions + bulkheads,PLACEHOLDER_OWNER_VERIFY,
+framing,medium_500_1000sqft,per_sqft_floor,4.00,6.00,wood stud partitions + bulkheads,PLACEHOLDER_OWNER_VERIFY,
+framing,large_1000_2000sqft,per_sqft_floor,3.50,5.50,wood stud partitions + bulkheads,PLACEHOLDER_OWNER_VERIFY,
+electrical_rough_and_finish,small_lt_500sqft,lump_sum,6000,10000,ESA-certified rough-in + devices + pot lights,PLACEHOLDER_OWNER_VERIFY,accessory unit adds separate-circuit requirements
+electrical_rough_and_finish,medium_500_1000sqft,lump_sum,8000,14000,ESA-certified rough-in + devices + pot lights,PLACEHOLDER_OWNER_VERIFY,
+electrical_rough_and_finish,large_1000_2000sqft,lump_sum,11000,18000,ESA-certified rough-in + devices + pot lights,PLACEHOLDER_OWNER_VERIFY,
+electrical_panel_upgrade_200A,any,lump_sum,2500,4500,200 AMP panel upgrade,PLACEHOLDER_OWNER_VERIFY,standard inclusion on accessory-unit packages per real quotes
+plumbing_rough_and_finish,small_lt_500sqft,lump_sum,5000,9000,certified rough-in + fixture install,PLACEHOLDER_OWNER_VERIFY,assumes existing rough-in nearby; no rough-in adds 30-50%
+plumbing_rough_and_finish,medium_500_1000sqft,lump_sum,7000,12000,certified rough-in + fixture install,PLACEHOLDER_OWNER_VERIFY,
+plumbing_rough_and_finish,large_1000_2000sqft,lump_sum,9000,16000,certified rough-in + fixture install,PLACEHOLDER_OWNER_VERIFY,
+plumbing_stack_relocation,any,lump_sum,1500,3500,relocate stack if needed/doable,PLACEHOLDER_OWNER_VERIFY,real quotes carry this as conditional line
+water_separation_manifold,any,lump_sum,1200,2500,water separation per dwelling,PLACEHOLDER_OWNER_VERIFY,accessory units only; grounded as scope line in real quotes
+fire_sprinkler_furnace_room,any,per_head,1500,3000,sprinkler head per approved permit,PLACEHOLDER_OWNER_VERIFY,accessory units; grounded as scope line in real quotes
+hvac_rough_and_finish,small_lt_500sqft,lump_sum,3000,6000,vents + returns + exhaust rough-ins,PLACEHOLDER_OWNER_VERIFY,
+hvac_rough_and_finish,medium_500_1000sqft,lump_sum,4500,8000,vents + returns + exhaust rough-ins,PLACEHOLDER_OWNER_VERIFY,
+hvac_rough_and_finish,large_1000_2000sqft,lump_sum,6000,11000,vents + returns + exhaust rough-ins,PLACEHOLDER_OWNER_VERIFY,duct trunk relocation excluded per real quotes
+drywall_tape_mud,small_lt_500sqft,per_sqft_surface,2.75,4.00,board + machine mud + tape + corner bead,PLACEHOLDER_OWNER_VERIFY,level 4 finish per real quotes
+drywall_tape_mud,medium_500_1000sqft,per_sqft_surface,2.50,3.75,board + machine mud + tape + corner bead,PLACEHOLDER_OWNER_VERIFY,
+drywall_tape_mud,large_1000_2000sqft,per_sqft_surface,2.25,3.50,board + machine mud + tape + corner bead,PLACEHOLDER_OWNER_VERIFY,
+insulation,any,per_sqft_surface,1.50,3.00,Rockwool Safe n Sound batts,PLACEHOLDER_OWNER_VERIFY,spray foam (cold room) prices separately ~4-6/sqft
+painting,small_lt_500sqft,lump_sum,2500,4500,spray primer + 2 coats + doors/trims,PLACEHOLDER_OWNER_VERIFY,Benjamin Moore standard per real quotes
+painting,medium_500_1000sqft,lump_sum,3500,6000,spray primer + 2 coats + doors/trims,PLACEHOLDER_OWNER_VERIFY,
+painting,large_1000_2000sqft,lump_sum,5000,8500,spray primer + 2 coats + doors/trims,PLACEHOLDER_OWNER_VERIFY,
+flooring_install_lvp,any,per_sqft_floor,2.00,3.50,LVP + underpad + baseboards install labor,PLACEHOLDER_OWNER_VERIFY,material allowance separate; see material-allowances CSV
+subfloor_dmx,any,per_sqft_floor,2.00,3.00,DMX 1-Step subfloor install,PLACEHOLDER_OWNER_VERIFY,DMX+plywood variant is an upgrade line per real quotes
+tiling,any,per_sqft_floor,8.00,14.00,floor/wall tile install labor,PLACEHOLDER_OWNER_VERIFY,large-format 24x48 at high end
+stairs_finish,any,lump_sum,2500,5000,laminate caps/risers or sand-and-stain,PLACEHOLDER_OWNER_VERIFY,
+millwork_doors_trim,any,per_door,350,600,door + casing + hardware install,PLACEHOLDER_OWNER_VERIFY,20-min fire-rated door required at suite boundary for accessory units
+kitchen_install,any,lump_sum,3500,7000,cabinet + counter template/install labor,PLACEHOLDER_OWNER_VERIFY,cabinets/counters are material allowances
+bathroom_build,any,per_bathroom,8000,15000,full 3-piece build labor all trades,PLACEHOLDER_OWNER_VERIFY,cross-check against trade lines to avoid double count

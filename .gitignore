@@ -1,0 +1,23 @@
+# Original client quotes contain PII and the undisclosed business name.
+# Only the redacted corpus (corpus/quotes-redacted/) may be committed.
+quotes/
+
+# backend
+backend/.venv/
+backend/.env
+backend/qdrant_local/
+__pycache__/
+*.pyc
+
+# local tooling (not project code)
+.claude/settings.local.json
+.claude/skills/
+.agents/
+skills-lock.json
+
+# Source PDFs: re-downloadable from official sources (Ontario/Cambridge),
+# heavy (~74MB total), and Crown-copyright redistribution is unclear. The
+# extracted markdown in corpus/ is the actual RAG input and IS committed;
+# the extraction scripts need these PDFs locally to re-run.
+corpus/OBC/*.pdf
+corpus/cambridge-zoning-bylaw/*.pdf

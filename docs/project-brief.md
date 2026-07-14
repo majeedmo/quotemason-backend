@@ -1,0 +1,188 @@
+# Project brief — QuoteMason (agentic estimation assistant)
+
+**AI Engineering Certification Challenge (AI Maker Space, v1.0)**
+Due: 7pm ET, Tuesday July 16, 2026
+
+Place this file at `docs/project-brief.md` in your repo. `CLAUDE.md` at the repo root imports it.
+
+---
+
+## Context and constraints
+
+- Grading weights: Task 1 = 9, Task 2 = 15, Task 3 = 10, Task 4 = 15, Task 5 = 15, Task 6 = 14, Task 7 = 2, Final submission = 20 (10 video + 10 doc). ~44/100 points sit in build/eval/improve (Tasks 4–6) — scope needs to stay narrow enough to reach real results in Task 6, not just polish Tasks 1–2.
+- Hard requirements regardless of point weight: must have a memory component; must run on phone and laptop in a browser; must combine a personal-data RAG component **and** a public agentic search tool — both, not either.
+- This build is also meant to become the seed of a real product — two small Ontario building companies are interested. Scoping decisions below are chosen as genuine V0 bets, not just grading shortcuts.
+
+---
+
+## Task 1 — Problem, audience, scope
+
+**User**: The estimator (or estimating manager) at a small residential renovation/general contracting company. Not the homeowner submitting the request, and not the wider custom-home audience — see scope lock below.
+
+**Problem (one sentence, no solution implied)**:
+Estimators at residential renovation contracting companies spend hours per quote manually cross-referencing material costs, current supplier pricing, and municipal zoning requirements, with no reliable way to check consistency against past projects.
+
+**Why it's a problem**: The estimator's job is to turn an inbound request (e.g. "finish my basement, 900 sqft, 1 bed 1 bath") into an accurate, defensible quote fast enough to win the job, without underpricing the build or missing a requirement that surfaces later as an expensive change order. Today that's manual and memory-dependent: visit the property or review submitted specs, calculate a rough material takeoff from experience-based rules of thumb (undocumented, inconsistent estimator to estimator), call or browse supplier sites for current prices, separately try to recall or look up zoning/code triggers (egress for a basement bedroom, fire suppression near a furnace room), and dig through old files for a comparable past job. This takes hours to days per quote, produces inconsistent results, uses pricing that's often stale by send time, and a missed code requirement doesn't surface until permitting or inspection — triggering change orders and damaged trust. Slow turnaround also loses bids to faster-quoting competitors.
+
+**Today's workflow** (for the required diagram): request received → site visit / review specs & photos → **material takeoff (manual, inconsistent)** → **supplier pricing check (slow)** → **zoning/code check (manual, easy to miss)** → **past-project lookup (often skipped)** → draft quote in Excel/Word → internal review → send to customer. The four bolded steps are the automation targets.
+
+**Starter eval questions** (also seeds Task 5's golden set):
+1. Complete spec ("basement, 900sqft, 1 bed, 1 bath, laminate") → should return a full estimate without follow-up questions
+2. Vague input ("I want to renovate") → should trigger guided follow-up, not a premature estimate
+3. Basement bedroom with no obvious second egress → should flag the code requirement and its cost impact
+4. Same spec as a completed past project, different finish level → cost delta should trace to the material swap
+5. Finish combination with no close past-project match → should say so, not fabricate a comparable
+6. Commercial-scale request → should recognize it's out of scope and escalate to a human
+7. "Why does this line item cost what it does?" → answer should cite the specific supplier price and/or bylaw clause
+
+---
+
+## Scope lock
+
+**Real business context**: Company A is a small residential builder doing basement renovations and small projects across the GTA, London, and Kitchener-Waterloo-Cambridge region of Ontario. Company B does custom houses and granny/backyard suites (ADUs), with wider interest, but across a much larger footprint (wider Ontario plus other provinces).
+
+**In scope for the 6-day build**:
+- Project type: small residential renovations only (basement finishing, small additions) — no new-build/custom structural work
+- Geography: Ontario Building Code Part 9 (Housing and Small Buildings — province-wide) + Cambridge, ON zoning bylaw only
+- Input: text description plus stated sqft/room count/finish level — no blueprint/CAD vision parsing
+- Pricing: agentic web search (Tavily) — no live vendor scraping
+- **Hard product principle, non-negotiable**: the agent drafts, a licensed estimator always reviews and approves before anything reaches a client
+
+**Explicitly deferred to the capstone**:
+- Company B's custom-home / ADU / granny-suite use case
+- Multi-municipality and multi-province zoning coverage
+- Blueprint/CAD vision-based material takeoff
+- Real-time multi-vendor price integration
+- The full automated bylaw-refresh pipeline (see Data freshness below for what ships now)
+
+---
+
+## Task 2 — Proposed solution and architecture
+
+**Solution, one sentence**: An agentic estimation assistant that guides a customer through structured project intake, retrieves relevant context (comparable past projects, builder guidelines, Ontario Building Code, Cambridge zoning bylaws), checks current material pricing via web search, and drafts a fully cited quote for a human estimator to review and approve before a simplified client-facing version goes out.
+
+| Component | Choice | Why |
+|---|---|---|
+| LLM gateway | OpenRouter | Model-swap flexibility + automatic fallback routing (`models` array); satisfies the gateway requirement ("of your choice"). **No course precedent — deliberate choice** (corrected 2026-07-13: an earlier note claimed Session 09 used OpenRouter; that was a node_modules grep false positive — Session 09 is OpenAI-direct, and the only in-course gateway is Vercel AI Gateway in Sessions 05/06). Kept because the model mix is cross-provider (Anthropic drafting/intake + OpenAI judge + Google fallback) and OpenRouter stays vendor-neutral after the Vercel backend deploy failed. Both gateways are OpenAI-compatible with `provider/model` slugs, so adapting the Session 05/06 eval notebooks for Task 5 is a base_url + API-key swap either way |
+| Agent orchestration | LangGraph | Existing hands-on experience; matches course material |
+| Tools | Tavily (pricing search), past-project retriever, OBC + Cambridge zoning retriever | Tavily satisfies the external-API requirement; two retrievers map to the two RAG data types |
+| Embedding model | OpenAI text-embedding-3-small | Cheap, solid quality, minimal setup friction |
+| Vector database | Qdrant | Matches Session 1 (Dense Vector Retrieval) and every subsequent session that uses OpenAI embeddings — `langchain_qdrant.QdrantVectorStore` + `text-embedding-3-small` is the course-consistent pairing |
+| Memory | Upstash Redis | Satisfies "must have memory"; known working pattern |
+| Structured store | Neon Postgres | Versioned `quote_drafts` review store (the estimator gate — built 2026-07-13); the original past-project pre-filter idea (sqft/rooms/tier before semantic search) remains a Task 6 improvement candidate |
+| Monitoring | LangSmith | Native to LangGraph; gives traces for Task 5 |
+| Evaluation | RAGAS + LLM-as-judge | RAGAS for retrieval quality; judge for tool-call and bylaw-trigger correctness |
+| UI | Next.js chat interface | Responsive by default — satisfies phone + laptop requirement |
+| Deployment | Vercel (frontend) + Render (backend) | Backend on Render because the Vercel + Docker-container combination didn't work; Render is free and deviates from Session 09's LangGraph Cloud/Docker-VPS precedent by choice, not oversight |
+
+**Model selection (decided 2026-07-12, prices verified live via the OpenRouter API the same day; all per 1M tokens in/out):**
+
+| Role | Model ID | Price | Why |
+|---|---|---|---|
+| Drafting agent (quote synthesis, citations, tool calls) | `anthropic/claude-sonnet-5` | $2 / $10, 1M ctx | Newest Sonnet; strongest tool-calling/citation discipline in its price band; cheaper than Sonnet 4.6 ($3/$15) and than GPT-5.2 on output ($14) |
+| Intake agent (slot-filling, trigger screening, high turn volume) | `anthropic/claude-haiku-4.5` | $1 / $5 | Cheap, fast, same family as the drafter so prompt conventions and tool-call behavior stay consistent across LangGraph nodes |
+| Eval judge (LLM-as-judge, offline batches) | `openai/gpt-5.1` | $1.25 / $10 | Deliberately **cross-family** — an Anthropic judge scoring Anthropic drafts invites self-preference bias; also the RAGAS judge model |
+
+- Fallback routing (OpenRouter `models` array): drafting → `openai/gpt-5.1`; intake → `google/gemini-2.5-flash` ($0.30/$2.50). Cheaper intake swap if volume ever matters: `openai/gpt-5-mini` ($0.25/$2).
+- Embeddings stay OpenAI-direct (`text-embedding-3-small`), not via OpenRouter — locked earlier per course precedent.
+- Expected spend at challenge scale (corpus ingestion is embeddings-only; drafting/eval runs are dozens, not thousands): low tens of dollars.
+
+---
+
+## Task 3 — Data
+
+**RAG corpus (personal data)**:
+1. Past renovation projects — **sourced and redacted (2026-07-12)**: the RAG corpus is `corpus/quotes-redacted/` — 21 markdown files (P01-P21, deduplicated from 23 originals) with frontmatter `{project_code, city, street, package_tier, scope, revised}`, produced by `scripts/redact_quotes.py` per the standing data-handling policies (see "Data-handling policies" section below). Redacted: client names/emails/phones, house numbers, postal codes, permit/estimate numbers, and the contractor's identity (name → "Company A", address, licence/HST/WSIB numbers). Kept: **street names and cities** (the zoning-lookup signal), tiers, line items, prices, timelines. Originals stay in `quotes/` which is **gitignored — never commit it**. The underlying set: ~14-15 distinct real Company A projects (some as `_REVISED` copies of the same project), 700-2000 sqft basement/accessory-unit renovations across Milton, Mississauga, Oakville, Guelph, and Woodbridge. Reviewed (2026-07-12): the company uses three named package tiers — **ESSENTIAL / SUPERIOR / SUPREME** — plus a scope distinction between "Accessory Unit/Basement Apartment" (adds a legal second unit + kitchen) and plain "Finished Basement" (rec room only). Use this real vocabulary in prompts/schema rather than a generic "finish level" placeholder. No two quotes share a close spec/sqft across different package tiers, so eval question #4 (cost delta from a finish-level swap) isn't covered by the real data as-is — synthesize 1-2 paired variants (same spec, different package tier) to cover it. One reference document also exists: a redacted insurance-restoration estimate (Belfor format, shared by Company B for reference). Useful for line-item costing structure only — **do not** copy its RCV/depreciation/ACV schema, since it's an insurance-claim format, not a voluntary-renovation quote.
+2. Builder guideline documents (material calculation rules of thumb) — **stand-in drafted 2026-07-12** (scope expanded from the original 2-3 pages to a detailed draft at the user's request, for real business-owner review next phase): `corpus/guidelines/builder-guidelines-DRAFT-v0.md` plus two referenced spreadsheets, `labor-rates-DRAFT-v0.csv` (trade × job-size bands — all rates placeholder) and `material-allowances-DRAFT-v0.csv` (per-tier allowances — grounded). Contents: Finished Basement vs. Accessory Unit scope split, ESSENTIAL/SUPERIOR/SUPREME package inclusions, the **high-variance intake question list** (12 slot-filling questions driving eval Q1/Q2), material rules of thumb, 17 quoting rules mined from real contract boilerplate (HST, deposits, milestones, change-order policy, standard exclusions, warranty, no-auto-send), a **two-tier manual-intervention trigger list** (guideline doc §6, added 2026-07-12 at the user's request: HARD ROUTE = keyword/condition categories where the agent stops drafting and routes to the estimator — structural work, hazmat, insurance claims, permit avoidance, tenancy, out-of-band size/budget, etc.; FLAG = draft continues but carries an estimator-acknowledgment block; keyword lists are the source of truth and routing events are LangSmith-tagged, which is the eval hook for Q6), a code-trigger checklist mapped to the Phase 1 OBC extracts, and real price anchors ($50-127/sqft across tiers). Every value tagged [GROUNDED] (from real quotes) or [PLACEHOLDER] (owner must verify — §8 lists the review questions). Comprehensive owner-authored doc is capstone scope.
+3. Ontario Building Code Part 9 (Housing and Small Buildings) — **sourced**: `corpus/OBC/301880.pdf` is the full 2024 Building Code Compendium (Divisions A/B/C, Parts 1-11, 1260 pages), with Part 9 occupying roughly pages 725-1120. **Ingestion is phased (decided 2026-07-12)** — the schedule's biggest risk is time sunk parsing this PDF, so get a thin end-to-end pipeline working before attempting the full extraction:
+   - **Phase 1 (challenge scope) — extracted 2026-07-12, list approved by user**: 18 approved items extracted as 15 metadata-tagged markdown files in `corpus/OBC/part9_phase1/` via `scripts/extract_obc_part9_phase1.py` (re-runnable; page ranges verified against the compendium). Covered: Division A 1.4.1.2 defined terms; 9.5 room dimensions/ceiling heights (incl. Ontario 9.5.3A-F minimum areas); 9.7.1-9.7.2 windows; 9.8 stairs (dimensions, handrails, guards); 9.9.9-9.9.10 egress incl. bedroom egress windows; 9.10.9 fire separations; 9.10.13 closures; 9.10.19 smoke alarms; 9.11.1 sound transmission; 9.31 plumbing facilities; 9.32.1-9.32.2 ventilation; 9.32.3.9/9.32.3.9A CO alarms; 9.33.1 heating; 9.41 change of use. Corrections vs. the original candidate list: CO alarms are **9.32.3.9** in the 2024 code (not 9.33.4 as in 2012); bedroom egress windows are **9.9.10** (not 9.7); **9.41 Additional Requirements for Change of Use** was added — its scope clause (b) is exactly the one-suite→two-suite basement-apartment conversion (it references Part 11 compensating-construction articles, which stay out of Phase 1). Deliberately excluded: 9.13 dampproofing, 9.25 insulation (energy = SB-12), 9.23 framing, 9.34 electrical (Electrical Safety Code), structural sections.
+   - **Phase 2 (stretch, only after the full pipeline runs end-to-end)**: the full Part 9 page range.
+   - Never in scope this build: the full compendium, or the companion supplementary-standards volume (`corpus/OBC/301881.pdf`).
+4. Cambridge, ON zoning bylaw — **sourced (2026-07-12), with a version caveat**. The regulatory landscape changed underneath the original plan: on 2026-02-03 Cambridge enacted **By-law 26-007** (Phase 1 Comprehensive Zoning By-law — form-based residential zones), which repeals and replaces the residential zones/regulations of old By-law 150-85. Residential zones are exactly where the basement/accessory-unit use case lives, and 26-007 explicitly covers additional dwelling units — so **26-007, not a 150-85 consolidation, is the correct corpus for this build**. On hand in `corpus/cambridge-zoning-bylaw/`:
+   - `phase1-zoning-bylaw-26-007-draft-dec2025.pdf` (236 pp) — the December 2025 recommended text, i.e. the version council enacted (modulo any tweaks at enactment). **Ingest this one**, with `source_version: "26-007 draft (Dec 2025)"` so it's cleanly superseded when the certified copy lands — a live validation of the `effective_date`/`source_version` design.
+   - `council-report-25-034-PG.pdf` — the staff report recommending enactment (formerly misnamed `150-85.pdf`). Context only, contains no zoning provisions — **do not ingest**.
+   - The certified 26-007 PDF link on cambridge.ca 404s (site restructure); the in-progress email to planning@cambridge.ca should now ask for the **certified By-law 26-007 plus any changes made between the Dec 2025 draft and enactment** — not a 150-85 consolidation. (150-85 still governs non-residential and deferred/site-specific lands, which are out of scope anyway.)
+
+**Chunking strategy**: structure-aware, by section/clause — not fixed token size. Every chunk carries its section number and title as metadata (ideally prefixed into the chunk text itself), so an isolated retrieved chunk still carries citation lineage. Required because quotes must cite exact bylaw/code sections.
+
+**Metadata schema** (design for N municipalities now, populate for one):
+`{jurisdiction, doc_type: building_code | zoning_bylaw, part/division, section_number, title, effective_date/source_version, source_url}`
+One shared vector store/collection, filtered by jurisdiction + doc_type at query time — not a separate index per municipality. The OBC is a one-time ingest that covers the whole region regardless of how many municipalities get added later; only the zoning bylaw layer grows per municipality.
+
+**External API/agent tool**: Tavily, for current material pricing lookups.
+
+---
+
+## Task 5/6 — Eval and advanced retriever plan
+
+- Golden eval set: seed from the Task 1 starter questions above (intake completeness, bylaw-trigger detection, past-project retrieval, hallucination resistance, scope boundaries, citation quality)
+- RAGAS for retrieval-quality metrics; LLM-as-judge rubric for what RAGAS doesn't cover (tool-call correctness, bylaw-trigger correctness)
+- **Advanced retriever**: hybrid dense + keyword (BM25) search. Dense legal/code text has exact defined terms and clause numbers that pure semantic search under-retrieves.
+- **Second improvement candidate**: query rewriting — translate informal customer language ("extra sprinklers in the furnace room") into formal code terminology before retrieval. This vocabulary gap between customer language and code language is a genuine retrieval failure mode.
+- Also viable as a second improvement: Neon Postgres structured filter (sqft/room count/finish) before semantic search over past projects.
+- Log every estimator edit to a drafted quote in LangSmith — each edit is a labeled example of what the agent got wrong. Free eval data for this build, and the seed of the real product's data flywheel (see `docs/product-analysis.md`).
+
+---
+
+## Data-handling policies (standing, set 2026-07-12)
+
+1. **PII redaction before any processing.** Every quote — current and all future ones — is redacted before it is ingested, analyzed, or quoted from. Pipeline: original lands in gitignored `quotes/` → register file + client name tokens in `quotes/redaction-map.json` (local-only) → run `scripts/redact_quotes.py` → all downstream work uses `corpus/quotes-redacted/`. The script ends each run with a leak scan.
+2. **Address rule: anonymize the house number only.** `5448 Rochelle Way, Mississauga` → `[NO] Rochelle Way, Mississauga`. Street name and city are deliberately **kept** — street + city is what lets the system resolve the correct zoning context. Postal codes are removed (house-level precision).
+3. **Business naming: Company A / B / C.** No partner has granted business-name disclosure. Refer to partners only by letter, consistently, in every committed file and deliverable: Company A = the renovation contractor whose quotes seed the corpus; Company B = the custom-home/ADU builder (capstone scope). The pipeline enforces this inside quote text; apply it manually in docs, code, the demo video, and the submission write-up. If a partner later grants permission, that is a single find-replace, not a policy change.
+
+## Data freshness strategy (bylaws get amended)
+
+**Ship now** (cheap, in scope for the challenge):
+- `effective_date` / `source_version` metadata field on every chunk, even though only one version exists right now
+- A manual `refresh_bylaw.py` stub script that re-runs ingestion against a new document version
+
+**Capstone scope** (the full pipeline):
+- Scheduled hash-diff polling per jurisdiction — weekly for zoning bylaws, quarterly for the OBC (provincial changes are rarer and well-publicized). Detection is just a fetch + hash compare — no LLM calls, essentially free.
+- Section-level diffing, not whole-document — only re-embed sections whose hash changed, so cost scales with the size of the edit, not the document.
+- Human review of diffs before publishing — mirrors the human-review product principle already locked in for quotes.
+- Versioned upsert — mark superseded chunks rather than hard-deleting, for an audit trail.
+- At scale: prioritize refresh frequency by active usage; onboard new municipalities on demand rather than pre-loading broadly.
+
+---
+
+## Reference materials produced this planning phase
+- Redacted sample estimate (Belfor/insurance-restoration format) — structural reference only, see caveat above
+- Current-state estimator workflow diagram (Task 1 deliverable draft)
+- Regulatory document RAG pipeline diagram (chunking → metadata tagging → shared vector store → filtered retrieval)
+- Bylaw refresh / cost-control pipeline diagram
+
+## Competitive positioning (verified via web search, 2026-07-12)
+Full analysis, sources, and the post-challenge roadmap live in `docs/product-analysis.md` — that file is real-product thinking, **not** challenge scope. The two findings that shape how Tasks 1-2 should be framed:
+- "Describe the project, get an AI estimate" is a funded, commoditizing category (Handoff at $149-299/mo, Buildxact, Clear Estimates). Standalone AI code-checking is also crowded, including free Ontario-specific tools. Neither camp does both.
+- This product's differentiator — and how the deliverables should pitch it — is the **join**: code/zoning triggers flagged *inside* the quote with clause citations, priced from the contractor's *own* past jobs. Not "AI writes your quote," and not "AI checks the code."
+
+## Product flow clarifications (resolved 2026-07-12)
+- **Intake style**: structured slot-filling, not free chat — the agent works through the high-variance question list from the guideline doc (see Task 3 item 2) and only drafts once the cost-driving slots are filled or explicitly unknown.
+- **Review/send gate**: single estimator persona — the same person reviews the AI-drafted quote and decides to send or edit. No separate "licensed estimator" role, no auth/roles needed. This still satisfies the non-negotiable no-auto-send principle: the agent never sends anything itself.
+- **Send action**: a stand-in for this build (e.g. `mailto:` link or copy-to-clipboard) — no real transactional email service. Real email integration (Resend/SES/etc.) is capstone scope.
+- **Memory**: satisfied by Upstash Redis backing the LangGraph checkpointer for the single intake conversation thread (conversation memory = checkpointing). No separate cross-session "resume this customer's draft tomorrow" feature planned for this build.
+- **Scope triage if time runs short**: no hard floor on corpus completeness. A working end-to-end pipeline over a thinner corpus beats a stalled build waiting on missing data — ship with a partial corpus if needed and disclose gaps plainly in the Task 7 reflection. Priority order for the remaining days: OBC Part 9 extraction → builder guideline doc draft → quote review (finish-level pairs) → Cambridge zoning bylaw ingestion (document now sourced — see Task 3 item 4 — but its chunking/ingestion remains the last-priority, best-effort item — done 2026-07-12, see Build status).
+
+## Build status (as of 2026-07-12 — Task 4 underway)
+
+- **Repo scaffolded**: `backend/` (Python/uv — `app/config.py`, `app/ingestion/`), `frontend/` (stub, Next.js scaffold pending), root README (course instructions preserved at `docs/challenge-instructions.md`), `.gitignore` covers env/PII/artifacts.
+- **Ingestion pipeline working (dry-run validated)**: `backend/app/ingestion/` — loaders (frontmatter-aware, all four corpus sources), structure-aware chunkers per doc_type (OBC articles incl. batched Division A defined terms; quote work-categories + boilerplate blocks; guideline md sections; CSV rows grouped by trade), citation prefix embedded in every chunk text, deterministic chunk IDs for idempotent upsert, one shared Qdrant collection (local on-disk default, `QDRANT_URL` for cloud). **730 chunks: 251 building_code, 281 past_project_quote, 44 builder_guideline, 154 zoning_bylaw; median 640 chars, max 4,083.** Cambridge zoning bylaw landed 2026-07-12: `scripts/extract_zoning_bylaw.py` extracts By-law 26-007 (Parts 1-5, 7, 11-13; reserved parts and map pages skipped) into `corpus/cambridge-zoning-bylaw/parts/`, chunked at section level with batched Part 3 defined terms.
+- ~~Blocked on keys~~ **Ingestion run 2026-07-12**: all 730 chunks embedded (`text-embedding-3-small`) and upserted to the **local embedded Qdrant** (`backend/qdrant_local`, collection `estimator_corpus`) — `QDRANT_URL` isn't set yet, so this is the local fallback. Retrieval sanity-checked: "bedroom egress window" returns OBC §9.9.10.1 at 0.724 with the `doc_type` filter working. Re-run is an idempotent upsert (`cd backend && uv run python -m app.ingestion.ingest`). ~~Remaining: provision Qdrant Cloud~~ **Qdrant Cloud live 2026-07-14**: `QDRANT_URL`/`QDRANT_API_KEY` set, all 730 chunks upserted (counts match local exactly: 251/281/44/154). Validation caught that Qdrant Cloud's strict mode rejects filters on unindexed payload fields (the local embedded store never needed indexes) — fixed by creating keyword/bool payload indexes on all six filtered keys (`doc_type`, `jurisdiction`, `city`, `package_tier`, `scope`, `synthetic`), now done idempotently in `ingest.py` so cloud re-runs and `refresh_bylaw.py` stay covered. Live-verified against cloud: egress → OBC 9.9.10.1, ARU → 26-007 §4.19, tier filter → SUPREME-only hits, `--no-synthetic` excludes S01 while the unfiltered query ranks it first. 21 tests passing.
+- **Retrieval module built 2026-07-13**: `backend/app/retrieval/` — `CorpusRetriever` (filtered dense search, one shared collection, `must`/`must_not` metadata filters), doc_type helpers (`search_building_code` / `search_zoning` / `search_guidelines` / `search_past_quotes` with city/tier/scope/`include_synthetic` filters), `RetrievedChunk.citation` (doc_type-aware source lines for the drafter), smoke CLI (`uv run python -m app.retrieval.smoke_test "query" --doc-type …`), 5 unit tests (no-network fakes; `uv run pytest`). Live-verified against the ingested collection: ceiling heights → OBC 9.5.3.1, ARU query → By-law 26-007 §4.19, SUPREME tier filter → P21 only, `--no-synthetic` excludes S01/S02. Hybrid BM25 stays the Task 6 upgrade.
+- **LangGraph agent built 2026-07-13**: `backend/app/agent/` — graph `intake → (ask | hard_route | retrieve → pricing → draft)`. `guidelines.py` parses §3/§5/§6 from the guideline doc at runtime (keyword lists stay source-of-truth in the doc, per policy) with a deterministic stem-ish keyword scan + LLM judgment layer; §6.3 precedence (deterministic hard hit overrides the model) enforced in code; routing events LangSmith-tagged (`route=`, `trigger=`) best-effort. Intake = haiku-4.5, drafting = sonnet-5 via OpenRouter with the brief's fallback `models` array. Memory = checkpointer: Upstash `RedisSaver` when `UPSTASH_REDIS_URL` is set, in-memory fallback otherwise. Tavily pricing node (≤3 volatile-material queries, skips gracefully without key). Chat REPL: `uv run python -m app.agent.cli`. 9 agent unit tests (14 total with retrieval) — trigger scan against the real doc, hard-route precedence, slot merging, malformed-JSON degradation, accessory-unit retrieval fan-out, graph wiring. ~~Live run blocked on `OPENROUTER_API_KEY`~~ **Unblocked 2026-07-13**: key set in backend/.env and user ran a quick live e2e test successfully. Also wired: Neon `DATABASE_URL`, LangSmith keys. Upstash memory **working 2026-07-13**: the official `langgraph-checkpoint-redis` RedisSaver requires RediSearch (`FT.*`), which Upstash doesn't support (this is why the URL had been commented out) — replaced with a custom plain-Redis `UpstashRedisSaver` (`backend/app/agent/redis_checkpointer.py`, core commands only), URL re-enabled in .env, live-verified against Upstash (persistence across fresh connections, thread resume, state history) with all 14 tests still passing.
+- **FastAPI surface + estimator review gate built 2026-07-13**: `backend/app/api/` (`uv run uvicorn app.api.main:app`) + `backend/app/quotes/store.py`. The gap it closes: drafts previously lived only in the LangGraph checkpoint (no queue/status/edit capture). Now every completed drafting run persists to Neon `quote_drafts` (versioned per thread; status `pending_review → edited → approved`, with `superseded` on revision). Endpoints: `POST /chat` (intake turn; persists draft when intake completes), `GET /quotes[/{id}]` (review queue), `POST /quotes/{id}/edit` (stores estimator edit + logs an `estimator_edit` run to LangSmith — the eval-flywheel hook), `POST /quotes/{id}/approve` (returns `mailto:` stand-in — no auto-send path), `POST /quotes/{id}/revise` (resumes the same thread via conditional graph entry that skips intake; `estimator_feedback` + previous draft go to the drafter, flag cleared after). Live e2e verified 2026-07-13 (thread `e2e-api-demo`, rows kept in Neon as demo data): 3-turn intake → 14k-char cited draft persisted → edit (visible in LangSmith) → revise removed the wet bar coherently across all sections and v1 superseded → approve returned the mailto URL. 20 tests passing (6 new API + 1 revision-path).
+- **Next.js frontend built 2026-07-13**: Next 16 + Tailwind v4 + react-markdown; `npm run dev`, prod build + lint clean. **Moved out 2026-07-14** to its own repo at `~/work/code/quotemason-frontend` (own git history, pushed to GitHub separately, deploys to Vercel independently of the backend repo). Three responsive routes: `/` landing page for the **fictional contractor brand "Maplewood Renovations"** (layout templated on a contemporary contractor site at the user's request — nav/hero/services/projects/testimonials/estimate-CTA/footer, "Powered by QuoteMason" credit, no real business names per policy); `/estimate` customer intake chat (per-tab `sessionStorage` thread_id resumes the Upstash checkpoint on reload; complete/hard-route status banners); `/estimator` QuoteMason review console (single persona, no auth per product-flow decision — queue, routing-packet view, edit, request-changes → revision run, approve with **copy-to-clipboard primary** + `mailto:` secondary, since 14k-char bodies overflow mailto URL limits). Backend gained `CORS_ORIGINS` (config + middleware, default `http://localhost:3000`). Smoke-verified live 2026-07-13: all 3 pages 200, CORS header present, `/quotes` renders the Neon demo rows, one live intake turn (vague input → `ask`, per eval Q2). Known cosmetic issue: the intake prompt makes the agent greet customers as "Company A" — swap to the fictional brand (or a neutral "our team") before the demo video. 20 backend tests still passing.
+- **Intake UX round 2026-07-14** (user feedback after local e2e): (1) contact gate before the chat — email required, name/phone optional, stored in `sessionStorage`, sent with every `/chat` call, merged into the routing packet (estimator console shows a "Client:" line; `/approve`'s `mailto:` now has a real recipient; `/revise` carries contact onto the new version); (2) **async drafting** — `/chat` invokes the graph with `interrupt_before=["retrieve"]`, so intake completion replies in seconds with a thank-you ("we'll email your quote shortly") and the customer **never sees the draft**; retrieval→pricing→drafting resumes in a FastAPI background task that persists to Neon (live-verified through the custom Upstash checkpointer: completion turn 4.2s, draft landed in the queue with contact attached); composer disables once the conversation completes; (3) drawings/photos drop widget on `/estimate` — client-side stub only (chips + "not yet analyzed by the AI" note), the capstone vision-takeoff talking point for the demo video, files never leave the browser per the no-blueprint-parsing scope boundary; (4) warmer green→cream gradient background on `/estimate`; (5) **remark-gfm** added to both ReactMarkdown views — react-markdown is CommonMark-only, so the drafts' pipe tables rendered as literal text until now; wide tables also scroll horizontally inside the card (`.prose-quote table` overflow) instead of distorting on small screens. (The `§` characters in drafts are the section sign used for guideline/OBC citations — intentional, not mojibake.) Also fixed 2026-07-13 (post-e2e): dev CORS default now includes `localhost:3001` (Next's fallback port when 3000 is taken — a duplicate dev server caused a "Failed to fetch" during the user's first local e2e). 21 backend tests passing.
+- **Repo split 2026-07-14 (deploy prep)**: two dedicated git repos, ready for first commit/push — `~/work/code/quotemason-frontend` (Next.js app, was `frontend/`; prod build verified post-move) and `~/work/code/quotemason-backend` (everything else: backend + corpus + scripts + docs + `render.yaml` at repo root, so the Blueprint's `rootDir: backend` works as written; the old course-repo path `aiec01/MM_Certification_Challenge` is now a compatibility symlink). Both trees leak-scanned against `quotes/redaction-map.json` word-by-word before init: zero real client/business tokens in any committable file (street names, P-codes, tier names are policy-sanctioned). `.gitignore` additions: local tooling (`.claude/settings.local.json`, `.agents/`, `skills-lock.json`) and the ~74MB source PDFs (`corpus/OBC/*.pdf`, `corpus/cambridge-zoning-bylaw/*.pdf`) — re-downloadable official documents with unclear Crown-copyright redistribution; the extracted markdown stays committed, extraction scripts need the PDFs locally to re-run. 21 backend tests pass from the new path.
+- Next build steps: first commits + GitHub push (both repos) → Render Blueprint + Vercel deploy → RAGAS/judge harness.
+- **Written submission started**: `docs/submission.md` — **Tasks 1 and 2 complete**. Task 1: problem statement, why-paragraphs with revised-pairs evidence, Mermaid current-state workflow diagram, 7 eval questions. Task 2: one-sentence solution + "join" positioning, Mermaid infrastructure diagram + 13-component rationale table (with decided models), Mermaid agent-workflow diagram (trigger screening → slot-filling → filtered retrieval → Tavily → cited draft → human gate) + 2-paragraph narrative. Tasks 3-7 appended as completed.
+
+## Open action items (as of 2026-07-12)
+- ~~Synthesize 1-2 paired quote variants~~ Done 2026-07-12 — two synthetic tier-counterparts in `corpus/quotes-synthetic/` (S01 = ESSENTIAL twin of P19's SUPERIOR finished basement, Δ$15.5k; S02 = SUPERIOR twin of P20's SUPREME accessory unit, Δ$15k; both `synthetic: true` + `paired_with` in frontmatter, code items identical across tiers by design). Judge's answer key with per-category delta attribution: `docs/eval-q4-synthetic-pairs.md` — deliberately outside `corpus/` so it can never be retrieved by the agent
+- ~~Draft the scoped stand-in builder guideline doc~~ Done 2026-07-12 — `corpus/guidelines/` (guideline doc + 2 rate/allowance CSVs, see Task 3 item 2). Remaining: business-owner review of all [PLACEHOLDER] values (next phase, not challenge scope)
+- ~~Mine the `_REVISED` quote pairs~~ Done 2026-07-12 — full analysis in `docs/revised-pairs-analysis.md` (3 true pairs + the P21→P20 same-property pair). Headlines: revisions happen at scope-block level, never unit prices; the Finished↔Accessory fork drives the biggest swings (+$12.5k P09→P10; $15k of finishes traded for the entrance/egress package at constant price P21→P20); windows/egress changed in 3 of 4 pairs; first drafts miss by ±12-26%. Fed guideline rule §5.18 (explicit count/location on exclusions) and confirmed the Phase 1 OBC section picks. P09→P10 is the demo-video story
+- ~~Extract the Phase 1 hand-picked OBC Part 9 sections~~ Done 2026-07-12 — 15 files in `corpus/OBC/part9_phase1/`, script at `scripts/extract_obc_part9_phase1.py` (see Task 3 item 3); full Part 9 range remains a stretch goal only after the pipeline runs end-to-end
+- ~~Source the Cambridge zoning bylaw~~ Done 2026-07-12 — By-law 26-007 Dec 2025 draft in `corpus/cambridge-zoning-bylaw/` (see Task 3 item 4). Remaining: email planning@cambridge.ca for the certified 26-007 + enactment diffs (nice-to-have, not blocking)
+- ~~Pick the OpenRouter model(s)~~ Done 2026-07-12 — drafting `anthropic/claude-sonnet-5`, intake `anthropic/claude-haiku-4.5`, judge `openai/gpt-5.1` (cross-family on purpose); full rationale + fallbacks in the Task 2 "Model selection" table
+- **Before final submission: verify the Mermaid diagrams in `docs/submission.md` render on GitHub** (added 2026-07-12). The three diagrams carry 17 rubric points (3+7+7); preview the file on github.com after pushing — the labels use HTML line-breaks/italics and classDef styling that should be checked against GitHub's mermaid renderer, and a diagram that doesn't render is the biggest single-point risk in Tasks 1–3
+- **Before final submission: externalize config from `backend/app/config.py`** (added 2026-07-12). The model IDs (`drafting_model`, `intake_model`, `judge_model`, `embedding_model`) are already pydantic-settings fields (env-overridable) — document them in a `.env.example`; `CORPUS_DIR` is a module-level constant with no env override — convert it to a `Settings` field for easy switching

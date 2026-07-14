@@ -1,0 +1,20 @@
+category,item,unit,ESSENTIAL,SUPERIOR,SUPREME,status,source
+kitchen,cabinet_style,spec,Shaker thermofoil MDF,AGT flat panel / painted MDF,Painted MDF/AGT panel + built-in appliance panels,GROUNDED,real quotes 2026
+kitchen,quartz_countertop,per_sqft_cad,30,45,45,GROUNDED,real quotes 2026
+kitchen,backsplash,per_sqft_cad,10 (tile),10 (tile),quartz to 45,GROUNDED,real quotes 2026
+kitchen,hardware_knobs_pulls,per_piece_cad,standard,15,15,GROUNDED,real quotes 2026
+kitchen,faucet,spec,Casa maple pulldown,KODAEN pulldown,KODAEN pulldown + pot filler,GROUNDED,real quotes 2026
+bathroom,floor_wall_tile,per_sqft_cad,3.99 (24x24),4.99 (24x48),5.99 (24x48) + feature wall to 8.99,GROUNDED,real quotes 2026
+bathroom,shower,spec,sliding glass + mosaic base,curbless + rain head + linear drain + niche,curbless + rain head + feature slab wall + niche,GROUNDED,real quotes 2026
+bathroom,vanity,per_unit_cad,500 (wooden 24-30in),floating + quartz top,floating + quartz top + sconces,GROUNDED,real quotes 2026
+bathroom,toilet,spec,one-piece,one-piece skirted,one-piece smart toilet,GROUNDED,real quotes 2026
+bathroom,mirror,spec,standard,LED,LED,GROUNDED,real quotes 2026
+flooring,lvp,per_sqft_cad,2.00 (7-8mm),2.00-2.50,2.50 (8-9mm Toucan),GROUNDED,real quotes 2026
+flooring,floor_tile_zones,per_sqft_cad,n/a,4.99,4.99 + 4in tile baseboards,GROUNDED,real quotes 2026
+flooring,baseboards,spec,5in step bevel + shoe molding,5in step bevel,5in wood step bevel + wood shoe,GROUNDED,real quotes 2026
+paint,brand,spec,Benjamin Moore,Benjamin Moore Regal,Benjamin Moore + lime wash ceiling feature,GROUNDED,real quotes 2026
+doors,interior,spec,single shaker hollow core,double shaker hollow core,single shaker + glass wall/slider options,GROUNDED,real quotes 2026
+doors,hardware,spec,black handles,TAYMOR locks,TAYMOR locks,GROUNDED,real quotes 2026
+electrical,pot_lights,max_count,40,40,40,GROUNDED,real quotes 2026 (max 40 across basement all tiers)
+windows,egress_window,spec,36x30 sliding,30x30 egress,48x42 + 30x30 enlarged egress,GROUNDED,real quotes 2026 (size varies by project not tier)
+stairs,finish,spec,one-piece laminate caps/risers,n/a or TBD,sand & stain + piano-look painted stringers,GROUNDED,real quotes 2026
