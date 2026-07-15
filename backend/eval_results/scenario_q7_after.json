@@ -1,0 +1,188 @@
+{
+  "scenarios": {
+    "q1-complete-spec": {
+      "title": "Complete spec: full estimate without unnecessary follow-ups",
+      "checks": {
+        "route_ok": true,
+        "expected_route": "draft",
+        "actual_route": "draft",
+        "flags": {
+          "ok": true,
+          "found": {}
+        },
+        "extra_turns": 0
+      },
+      "judge": {
+        "criteria": [
+          {
+            "criterion": "1. Intake completes within the scripted turns with at most one clarifying question beyond them",
+            "verdict": "pass",
+            "evidence": "Assistant asked a single multi-part clarification: \u201cFirst: Does the bedroom need an egress window? \u2026 Second: What\u2019s the current ceiling height\u2026?\u201d Then proceeded to draft without further turns."
+          },
+          {
+            "criterion": "2. Draft is a full estimate organized by work categories (flooring, primer+paint, partitions+insulation, electrical, plumbing, millwork, project management at minimum)",
+            "verdict": "pass",
+            "evidence": "Draft includes clearly labeled sections: \u201c2. PARTITIONS + INSULATION\u201d, \u201c5. FLOORING & STAIRS\u201d, \u201c6. PRIMER + PAINT\u201d, \u201c7. ELECTRICAL\u201d, \u201c8. PLUMBING\u201d, \u201c4. ONE WET BAR (KITCHENETTE)\u2026[millwork]\u201d, and \u201c11. PROJECT MANAGEMENT\u201d along with other categories."
+          },
+          {
+            "criterion": "3. Total lands inside the guideline S8 finished-basement band (~$45-65/sqft on ~900 sqft) or explains why it deviates",
+            "verdict": "partial",
+            "evidence": "It notes a \u201cSanity band only\u2026 \u2248 $45\u2013$65/sqft \u00d7 900 sqft = $40,500\u2013$58,500\u201d and that this must not be quoted, but never provides an overall total or an explicit explanation for deviating other than many lines marked \u201cestimator to price \u2014 no comparable on file.\u201d"
+          },
+          {
+            "criterion": "4. States HST is excluded, includes a milestone payment schedule and the 8-10 week finished-basement timeline",
+            "verdict": "pass",
+            "evidence": "HST: \u201cAll prices below exclude HST; HST will be added at invoicing.\u201d Milestones: section \u201cMILESTONES & TIMELINE\u201d lists 1\u20138 stages with deposit and final handover ranges. Timeline: \u201cTimeline: 8\u201310 weeks from construction start (finished-basement band, \u00a75.5, GROUNDED).\u201d"
+          },
+          {
+            "criterion": "5. Any slot the customer did not resolve appears under Assumptions per rule 5.11",
+            "verdict": "pass",
+            "evidence": "Unspecified details such as bathroom tile area, wet bar cabinetry length, panel capacity, egress sizing, slab condition, stairs condition, bulkhead/ducts, and 900 sqft measurement are all listed in \u201cASSUMPTIONS (\u00a75.11)\u201d items 1\u201310."
+          }
+        ],
+        "summary": "The assistant followed the scripted intake and produced a well-structured, category-based draft with HST, milestones, timeline, and assumptions documented. However, it did not provide a contract total within the guideline band, instead flagging most pricing for estimator completion.",
+        "counts": {
+          "pass": 4,
+          "partial": 1,
+          "fail": 0
+        }
+      }
+    },
+    "q3-code-trigger": {
+      "title": "Code trigger: basement bedroom without a second egress",
+      "checks": {
+        "route_ok": false,
+        "expected_route": "draft",
+        "actual_route": "hard_route",
+        "flags": {
+          "ok": true,
+          "found": {}
+        },
+        "extra_turns": 0
+      },
+      "judge": {
+        "criteria": [
+          {
+            "criterion": "Draft flags that a basement bedroom requires an egress window citing OBC 9.9.10 (openable without tools, 0.35 m2 unobstructed, no dimension under 380 mm)",
+            "verdict": "partial",
+            "evidence": "\"small original basement windows won't meet Ontario Building Code requirements for a bedroom egress (OBC 9.9.10 requires a code-size egress window or door)\" \u2014 cites OBC 9.9.10 and requirement generally, but does not mention 0.35 m2 unobstructed area or 380 mm minimum dimension."
+          },
+          {
+            "criterion": "Includes a priced line item for the egress window / window enlargement (concrete cutting), not just a mention",
+            "verdict": "fail",
+            "evidence": "Hard-routed with no draft quote produced: \"we'd need to add a new egress window with a concrete cut, window well, and drainage\" but no pricing or line items are provided."
+          },
+          {
+            "criterion": "The egress line item carries its OBC citation per quoting rule 5.15",
+            "verdict": "fail",
+            "evidence": "No line items exist in the interaction; therefore no egress line item and no attached OBC citation in a quote."
+          },
+          {
+            "criterion": "Smoke/CO alarm requirements (OBC 9.10.19 / 9.32.3.9) are addressed for the bedroom storey",
+            "verdict": "fail",
+            "evidence": "No mention of smoke or CO alarms or OBC 9.10.19 / 9.32.3.9 anywhere in the customer-facing text or routing packet."
+          }
+        ],
+        "summary": "The assistant correctly identified the need for a code-compliant egress window and cited OBC 9.9.10, but no quote or line items were produced and smoke/CO requirements were not addressed.",
+        "counts": {
+          "pass": 0,
+          "partial": 1,
+          "fail": 3
+        }
+      }
+    },
+    "q4-tier-delta": {
+      "title": "Tier delta: same spec as a past project, different package tier",
+      "checks": {
+        "route_ok": true,
+        "expected_route": "draft",
+        "actual_route": "draft",
+        "flags": {
+          "ok": true,
+          "found": {}
+        },
+        "extra_turns": 1
+      },
+      "judge": {
+        "criteria": [],
+        "summary": "",
+        "error": "judge output unparseable",
+        "raw": "{\"criteria\":[{\"criterion\":\"Draft retrieves and cites the matching Oakville finished-basement comparable(s) (P19 and/or its ESSENTIAL twin S01)\",\"verdict\":\"pass\",\"evidence\":\"\\\"The closest scope comparable is Past Project S01 (Oakville, ESSENTIAL, finished basement, 1,563 SQFT \u2014 nearly identical to this job)\\\" and \\\"*Source: Past Project S01 (Oakville, ESSENTIAL, finished basement) \u2014 scope match, no $ retrieved.*\\\"\"},{\\\"criterion\\\":\\\"Estimated total is consistent with the ESSENTIAL ground truth (~$62,000) within +/-25%, not the SUPERIOR comparable's $77,500 copied unadjusted\\\",\\\"verdict\\\":\\\"fail\\\",\\\"evidence\\\":\\\"No overall contract price is provided; most categories state **\\\"Price: estimator to price \u2014 no comparable on file\\\"** and there is no total anywhere in the draft to compare to $62,000.\\\"},{\\\"criterion\\\":\\\"Where pricing is adjusted down from a SUPERIOR comparable, the reduction traces to tier-controlled categories (kitchenette/wet bar, bathroom finishes, paint, millwork, electrical fixtures) per the allowances table\\\",\\\"verdict\\\":\\\"fail\\\",\\\"evidence\\\":\\\"The draft never references the SUPERIOR-tier $77,500 project or any adjustments from it; it only cites S01 and external market checks and leaves almost all major categories unpriced as \\\"estimator to price \u2014 no comparable on file.\\\"\\\"},{\\\"criterion\\\":\\\"Code-driven items (egress, framing/insulation/drywall, rough-ins, project management) are NOT presented as tier savings\\\",\\\"verdict\\\":\\\"pass\\\",\\\"evidence\\\":\\\"It states code items neutrally or as identical: \\\"No egress window is triggered because the basement room in question is a den, not a bedroom\\\" and \\\"Egress window... not applicable\\\"; framing/insulation/drywall, rough-ins, and PM are described without any mention of tier-based cost savings.\\\"},{\\\"criterion\\\":\\\"No fabricated scope differences between tiers\\\",\\\"verdict\\\":\\\"pass\\\",\\\"evidence\\\":\\\"The draft does not discuss tier-to-tier differences at all, only the ESSENTIAL scope for this job; there are no clai",
+        "counts": {
+          "pass": 0,
+          "partial": 0,
+          "fail": 0
+        }
+      }
+    },
+    "q7-citation-quality": {
+      "title": "Citation quality: every line item explains why it costs what it does",
+      "cross_cutting": true,
+      "judge": {
+        "q1-complete-spec": {
+          "criteria": [
+            {
+              "criterion": "Every code-driven line item cites its specific OBC or zoning clause (e.g. egress -> 9.9.10, alarms -> 9.10.19/9.32.3.9, suite conversion -> 9.41), not a vague 'per code'",
+              "verdict": "partial",
+              "evidence": "Egress/bedroom window: \"OBC 9.9.10.1\" and window areas: \"OBC 9.7.2.3\"; ceiling height: \"OBC 9.5.3.1\". However, electrical safety/alarms are only referred to as \"ESA-certified\" with no citation like 9.10.19/9.32.3.9, and suite-conversion/secondary-suite clauses (e.g. 9.41) are not cited at all."
+            },
+            {
+              "criterion": "Every priced line traces to a source: a comparable project code, a tier allowance from the guidelines, or a current price check",
+              "verdict": "pass",
+              "evidence": "Bathroom tile: \"120 sqft \u00d7 up to $4.99/sqft (SUPERIOR tier allowance, CSV)\"; wet-bar quartz: \"12 sqft \u00d7 up to $45/sqft (SUPERIOR tier allowance, CSV, per P19 comparable)\"; flooring: \"780 sqft \u00d7 up to $2.50/sqft (P18 comparable)\"; portable toilet: \"$2,000 portable toilet allowance (\u00a75.14, GROUNDED contract-policy rule)\"\u2014all monetary figures shown are tied to a guideline, comparable, or policy, and unpriced items are marked \"estimator to price \u2014 no comparable on file\" rather than guessed."
+            },
+            {
+              "criterion": "Line items derived from [PLACEHOLDER] labor rates are marked 'rate unverified'",
+              "verdict": "pass",
+              "evidence": "Whenever a [PLACEHOLDER] rate context appears, no dollar value is derived; instead the line is left as \"Price: estimator to price \u2014 no comparable on file\" (e.g. \"no $/LNFT framing or $/sheet drywall rate retrieved\"; \"no electrical [PLACEHOLDER] labour rate was retrieved\"), so no priced line is based on an unmarked placeholder labour rate."
+            },
+            {
+              "criterion": "Excluded or capped items state count and location explicitly per rule 5.18",
+              "verdict": "pass",
+              "evidence": "Wet-bar island exclusion: \"Kitchen Center Island (Wet Bar area, Basement, 1 location)\"; cold room: \"Cold Room under Porch (1 location)\"; pot lights: \"cap 40 across basement\"; wet bar cabinetry: \"assumed ~8 LNFT ... wet bar area, basement, 1 location\"\u2014exclusions and caps consistently include counts and locations."
+            }
+          ],
+          "summary": "Most priced numbers are well-sourced and exclusions/caps are specific by count and location, but some code-driven electrical/suite elements are only referenced generically rather than with precise OBC clauses.",
+          "counts": {
+            "pass": 3,
+            "partial": 1,
+            "fail": 0
+          }
+        },
+        "q3-code-trigger": {
+          "skipped": "no draft produced"
+        },
+        "q4-tier-delta": {
+          "criteria": [
+            {
+              "criterion": "Every code-driven line item cites its specific OBC or zoning clause (e.g. egress -> 9.9.10, alarms -> 9.10.19/9.32.3.9, suite conversion -> 9.41), not a vague 'per code'",
+              "verdict": "partial",
+              "evidence": "Egress/windows line cites \"*Citation: OBC 9.9.10.1; OBC 9.7.2.3*\" and summary cites OBC 9.5.3.1, but electrical life-safety items (\"strobe/smoke/CO alarms across basement\") have no OBC 9.10.19/9.32.3.9 citation, and no clause is cited for suite conversion (though not in scope)."
+            },
+            {
+              "criterion": "Every priced line traces to a source: a comparable project code, a tier allowance from the guidelines, or a current price check",
+              "verdict": "pass",
+              "evidence": "Only two monetary figures appear: LVP install band \"**$6\u2013$10/PSQFT installed** ... *Source: Tavily price check*\" and toilet fee \"**$2,000** fee applies (\u00a75.14, contract policy amount)\", both explicitly sourced; all other cost lines are marked \"estimator to price \u2014 no comparable on file\" or $0 with explanation."
+            },
+            {
+              "criterion": "Line items derived from [PLACEHOLDER] labor rates are marked 'rate unverified'",
+              "verdict": "pass",
+              "evidence": "For Electrical: \"bundled trade lines should be priced from the CSV placeholder rate marked 'rate unverified,' but no rate figure was retrieved\" and no numeric price is given; similar handling for Plumbing, HVAC, PM \u2014 no lines are actually derived from [PLACEHOLDER] rates without that qualifier."
+            },
+            {
+              "criterion": "Excluded or capped items state count and location explicitly per rule 5.18",
+              "verdict": "pass",
+              "evidence": "Exclusions list uses explicit count/location: \"Glass railings ... **basement stairs (existing stairs, 1 stairway, kept as-is)**\", \"Heated floors \u2014 **Basement Full Bathroom (1 location)**\", \"Cold room finishing/waterproofing \u2014 **existing cold room (1, kept as-is per intake, no scope)**\" and \"Ceiling soundproofing ... **entire basement ceiling (1 zone, add-on)**\"."
+            }
+          ],
+          "summary": "Code-driven items are mostly well cited, but electrical alarm code clauses are missing, so that criterion only partially passes. All priced figures are properly sourced or deferred, placeholder-rate handling is correct, and exclusions list counts/locations explicitly.",
+          "counts": {
+            "pass": 3,
+            "partial": 1,
+            "fail": 0
+          }
+        }
+      }
+    }
+  }
+}
