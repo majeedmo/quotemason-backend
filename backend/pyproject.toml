@@ -23,6 +23,14 @@ dev = [
     "httpx>=0.27",
     "pytest>=8.0",
 ]
+# Offline eval tooling (RAGAS SDG + metrics) — not needed by the deployed API.
+evals = [
+    "ragas>=0.4.3",
+    # ragas imports langchain_community.chat_models.vertexai, which 0.4.x removed
+    "langchain-community>=0.3.31,<0.4",
+    "pandas>=2.0",
+    "rapidfuzz>=3.0",
+]
 
 [tool.uv]
 package = false
