@@ -272,4 +272,41 @@ Validated end-to-end with `uv run python -m app.ingestion.ingest --dry-run` (chu
 
 ---
 
-*Tasks 4–7 are appended as they are completed.*
+# Task 4 — An End-to-End Agentic RAG Prototype
+
+## 4.1 The prototype
+
+The full pipeline from Task 2's diagrams is built and live: **customer chat → trigger screening → slot-filling intake → filtered RAG retrieval → Tavily price check → cited draft → estimator review gate → approve/revise** — on the locked production stack (LangGraph, OpenRouter, Qdrant Cloud, Upstash Redis, Neon Postgres, Tavily, LangSmith, FastAPI, Next.js) with commercial off-the-shelf models throughout (`claude-sonnet-5` drafting, `claude-haiku-4.5` intake, `text-embedding-3-small` embeddings).
+
+Where each piece lives (all in this repo's `backend/` unless noted):
+
+| Stage | Module | What it does |
+|---|---|---|
+| Ingestion | `app/ingestion/` | Structure-aware chunking (§3.2) → embeddings → idempotent upsert into one shared Qdrant Cloud collection (730 chunks), payload indexes created idempotently for filtered search |
+| Retrieval | `app/retrieval/` | `CorpusRetriever` — filtered dense search with doc_type helpers (`search_building_code` / `search_zoning` / `search_guidelines` / `search_past_quotes`), city/tier/scope/synthetic filters, citation-bearing results |
+| Agent | `app/agent/` | LangGraph graph `intake → (ask \| hard_route \| retrieve → pricing → draft)`. §6 trigger routing parses the guideline doc **at runtime** (the doc stays source-of-truth); deterministic hard-route hits override the model per §6.3. Tavily node spot-checks ≤3 volatile materials |
+| Memory | `app/agent/redis_checkpointer.py` | Custom `UpstashRedisSaver` LangGraph checkpointer — the official `RedisSaver` requires RediSearch, which Upstash doesn't offer, so a plain-Redis implementation was written; threads survive reconnects and power the revision loop |
+| Review gate | `app/api/` + `app/quotes/` | FastAPI: `POST /chat` (intake), `GET /quotes` (queue), `/edit` (logged to LangSmith as labeled eval data), `/revise` (resumes the same thread, new version supersedes), `/approve` (`mailto:` stand-in — **no auto-send path exists**). Drafts persist to Neon `quote_drafts`, versioned, `pending_review → edited/approved/superseded` |
+| Frontend | separate `quotemason-frontend` repo | Next.js, responsive (the phone + laptop requirement): `/` fictional-brand landing page, `/estimate` customer intake chat, `/estimator` review console |
+
+Two design decisions worth calling out because they shaped the prototype beyond "wire the pieces together":
+
+1. **The customer never sees the draft.** On intake completion, `/chat` pauses the graph (`interrupt_before=["retrieve"]`), replies to the customer in seconds with a thank-you, and finishes retrieval → pricing → drafting in a background task that lands the draft in the estimator's queue. This makes the human gate structural, not cosmetic — the draft's only exit is through the estimator.
+2. **The review gate is the system of record.** Drafts don't live in the chat stream; every completed run persists to Neon as a versioned row, estimator edits are captured and logged to LangSmith (the eval-data flywheel), and "request changes" resumes the original conversation thread through the Redis checkpointer so revisions stay context-aware.
+
+Verified end-to-end (live, real keys): a 3-turn intake produced a 14k-character cited draft persisted to the queue; an estimator edit was logged to LangSmith; a revision request removed a scope item coherently across all sections and superseded v1; approve returned the `mailto:` stand-in. 21 backend unit tests pass with no network access (`uv run pytest`).
+
+## 4.2 Public deployment
+
+| Surface | Platform | URL |
+|---|---|---|
+| Frontend | Vercel | **<https://quotemason-frontend.vercel.app>** |
+| Backend API | Render | **<https://quotemason-api.onrender.com>** (interactive docs at [`/docs`](https://quotemason-api.onrender.com/docs)) |
+
+The backend deploys from this repo via the root [`render.yaml`](../render.yaml) Blueprint (`rootDir: backend`); the frontend deploys from its own repo on Vercel. The two are joined by exactly two knobs: `NEXT_PUBLIC_API_BASE` on Vercel points at Render, and `CORS_ORIGINS` on Render allows the Vercel origin. Render was chosen over the course's Vercel-container precedent because the Vercel + Docker combination didn't work (Task 2 table) — a deliberate, documented deviation.
+
+Deployment verified live (2026-07-14): the frontend serves all three routes; `GET /quotes` on Render returns the Neon review-queue rows; the CORS preflight from the Vercel origin is honored (`access-control-allow-origin: https://quotemason-frontend.vercel.app`). One operational note: Render's free tier spins the API down when idle, so the first request after a quiet period takes about a minute to cold-start.
+
+---
+
+*Tasks 5–7 are appended as they are completed.*

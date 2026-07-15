@@ -6,6 +6,13 @@ AI Engineering Certification Challenge (AI Maker Space v1.0 — original task in
 
 Project context, scope decisions, and open items: [`docs/project-brief.md`](docs/project-brief.md) · agent working rules: [`CLAUDE.md`](CLAUDE.md)
 
+## Live deployment
+
+- **Frontend (Vercel):** <https://quotemason-frontend.vercel.app> — landing page, `/estimate` intake chat, `/estimator` review console
+- **Backend API (Render):** <https://quotemason-api.onrender.com> — FastAPI; interactive docs at [`/docs`](https://quotemason-api.onrender.com/docs)
+
+Render's free tier spins the API down when idle — the first request after a quiet period can take ~a minute to cold-start.
+
 ## Layout
 
 ```
@@ -24,7 +31,8 @@ docs/                       Brief, analyses, eval ground truth, challenge instru
 
 The Next.js frontend (landing page for the fictional "Maplewood Renovations"
 brand, `/estimate` intake chat, `/estimator` review console) lives in a
-**separate repo**: `quotemason-frontend` (deployed to Vercel).
+**separate repo**: `quotemason-frontend` (deployed to Vercel at
+<https://quotemason-frontend.vercel.app>).
 
 The source PDFs (2024 OBC compendium, Cambridge By-law 26-007) are **not
 committed** — they're large, re-downloadable from official Ontario/Cambridge
