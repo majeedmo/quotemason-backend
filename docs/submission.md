@@ -94,7 +94,7 @@ flowchart LR
     end
     TAV["Tavily<br/>material-pricing search"]
     LS["LangSmith<br/>traces + estimator-edit logging"]
-    EV["Eval harness (offline)<br/>RAGAS + LLM-judge: gpt-5.1"]
+    EV["Eval harness (offline)<br/>golden-set metrics + LLM-judge: gpt-5.1"]
 
     UI <--> API
     API <--> PG
@@ -142,9 +142,9 @@ flowchart TD
     RUNTIME -.every run traced.-> LS[("LangSmith<br/>traces + estimator edits")]
 
     subgraph EVAL["Offline — eval harness (never serves users)"]
-        LS2[Read traces + golden dataset] --> RAGAS["RAGAS metrics<br/><i>retrieval quality — no judge needed</i>"]
+        LS2[Read traces + golden dataset] --> METRICS["Retrieval metrics<br/><i>hit@k / MRR over golden set — no judge needed</i>"]
         LS2 --> JUDGE["Judge LLM<br/><b>openai/gpt-5.1</b><br/>rubric-scores drafts:<br/>right tool calls? bylaw/OBC<br/>triggers caught? citations real?"]
-        RAGAS --> REPORT[Eval report → prompt/retriever changes]
+        METRICS --> REPORT[Eval report → prompt/retriever changes]
         JUDGE --> REPORT
     end
 
@@ -159,7 +159,7 @@ flowchart TD
 
 - **Intake (`claude-haiku-4.5`)** — customer-facing and chatty: many turns per conversation, so the cheap model. Screens for §6 triggers and fills the twelve slots.
 - **Drafting (`claude-sonnet-5`)** — one heavyweight call per project that composes the cited quote; the model whose output quality matters most.
-- **Judge (`openai/gpt-5.1`)** — a grader, not a participant. It never talks to customers and never touches a quote; the eval harness replays LangSmith traces/dataset examples and the judge scores them against a rubric — the tool-call and bylaw-trigger correctness that RAGAS's retrieval metrics can't see. Cross-family on purpose: drafts written by an Anthropic model shouldn't be graded by an Anthropic model (self-preference bias), and because the judge runs offline in batch, its cost and latency never touch the user's request path.
+- **Judge (`openai/gpt-5.1`)** — a grader, not a participant. It never talks to customers and never touches a quote; the eval harness replays LangSmith traces/dataset examples and the judge scores them against a rubric — the tool-call and bylaw-trigger correctness that the retrieval metrics can't see. Cross-family on purpose: drafts written by an Anthropic model shouldn't be graded by an Anthropic model (self-preference bias), and because the judge runs offline in batch, its cost and latency never touch the user's request path.
 
 ## 2.3 Agent workflow
 
