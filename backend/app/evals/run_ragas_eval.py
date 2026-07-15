@@ -9,6 +9,12 @@ Grader = ``openai/gpt-4.1-mini`` by default (user-approved split 2026-07-15:
 mechanical metric grading goes to the fast OpenAI-family model; the deep
 scenario judge stays ``settings.judge_model``).
 
+NOTE (2026-07-15): never run — depends on the frozen SDG testset, which was
+retired before generation (see generate_testset.py for the difficulties and
+rationale). Task 5's shipped harness is run_retrieval_eval.py (hit@k/MRR over
+the hand-anchored golden set) + run_scenario_eval.py (gpt-5.1 judge). Kept
+runnable for the capstone.
+
 Live-API script (needs the evals dependency group):
 
     cd backend && uv run --group evals python -m app.evals.run_ragas_eval \

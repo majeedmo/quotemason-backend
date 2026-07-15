@@ -120,7 +120,7 @@ One sentence per component:
 | Structured store | **Neon Postgres** | Versioned `quote_drafts` review store — the estimator gate's data model (pending_review → edited → approved, superseded on revision); a structured past-project pre-filter is a Task 6 improvement candidate |
 | Memory | **Upstash Redis** | Backs the LangGraph checkpointer — the intake conversation thread survives turns/reconnects (satisfies the memory requirement) |
 | Monitoring | **LangSmith** | Native LangGraph tracing; every estimator edit is logged as labeled eval data |
-| Evaluation | **RAGAS + LLM-as-judge** | RAGAS for retrieval quality; judge rubric for what RAGAS can't see (tool-call and bylaw-trigger correctness) |
+| Evaluation | **Golden-set metrics + LLM-as-judge** | hit@k/MRR over hand-anchored cases for retrieval quality; gpt-5.1 judge rubric for tool-call and bylaw-trigger correctness. (A RAGAS SDG path was built, then retired for cost/fragility — see §5.1) |
 | UI | **Next.js chat interface** | Responsive by default — the phone + laptop browser requirement |
 | Deployment | **Vercel (frontend) + Render (backend)** | Render because the Vercel + Docker-container combination didn't work; deliberate deviation from course precedent |
 
@@ -309,4 +309,69 @@ Deployment verified live (2026-07-14): the frontend serves all three routes; `GE
 
 ---
 
-*Tasks 5–7 are appended as they are completed.*
+# Task 5 — Evaluation
+
+## 5.1 The test dataset (assembled and hand-anchored — deliberately not synthetic)
+
+The rubric allows the test set to be prepared *"either by generating synthetic data or by assembling an existing dataset."* This project ships the assembled path — two frozen, committed datasets in `backend/app/evals/data/`, both seeded from the seven Task 1 evaluation questions (§1.4):
+
+| Dataset | Contents | Size |
+|---|---|---|
+| `retrieval_golden.jsonl` | Hand-anchored retrieval cases. Ground truth is expressed against **chunk metadata** (`section_number` / `project_code` / title matchers), not chunk text — so scores survive re-chunking and retriever swaps, which is exactly what the Task 6 comparison needs. Each case carries a reference answer, curation notes, and optional `forbidden` matchers (e.g. synthetic quotes must not surface when `include_synthetic=False`) | 24 cases: 9 building_code, 5 zoning_bylaw, 5 builder_guideline, 5 past_project_quote |
+| `agent_scenarios.json` | Scripted end-to-end intake conversations, one per Task 1 eval question, each with an expected route (`draft` / `ask` / `hard_route`), expected flags, and rubric criteria for the LLM judge. Q7 (citation quality) is cross-cutting: it re-judges the drafts produced by Q1/Q3/Q4 | 7 scenarios |
+
+**Why not synthetic.** A RAGAS SDG path was fully built (`app/evals/generate_testset.py`) and then deliberately retired. Generation over this corpus proved slow and fragile — the gpt-5.1 generator was ~10x slower and stall-prone across SDG's hundreds of structured-output calls, models kept crashing RAGAS's JSON parser until an instructor-based tool-calling wrapper was added, hung requests froze one run at 98/103 until an explicit client timeout was added, and a machine restart lost an entire overnight run because SDG writes output only at the very end. After several hours of debugging and multiple aborted generation runs' worth of API spend on a deliverable the rubric explicitly lets you satisfy by assembly, the synthetic path was cut — and the hand-anchored set is the stronger instrument anyway: it has exact clause-level ground truth (egress → OBC 9.9.10, CO alarms → 9.32.3.9 *with the 2024 renumbering encoded*) that a generator cannot produce. The SDG script and its RAGAS metrics runner (`run_ragas_eval.py`: faithfulness, answer relevancy, context precision/recall) stay in the repo, documented and runnable, for the capstone.
+
+## 5.2 The evaluation harness
+
+The harness (`backend/app/evals/`) has two halves that share one design rule: **the graded artifact is the real system**, not a mock — live retrieval against the ingested Qdrant collection, live LLMs through the production graph.
+
+**Retrieval half** — `run_retrieval_eval.py` dispatches each golden case to its production doc_type helper (`search_building_code`, `search_zoning`, `search_guidelines`, `search_past_quotes` with the case's city/tier/synthetic filters) and scores **hit@k**, **MRR**, and **filter violations** (a retrieved chunk matching a `forbidden` matcher), overall and per doc_type. The retriever is selected by name (`--retriever dense` today) so Task 6 can score the hybrid retriever on the identical dataset and produce the comparison table.
+
+**Agent half** — `run_scenario_eval.py` plays each scripted scenario through the real LangGraph agent (live intake/drafting models, live retrieval, in-memory checkpointer), then grades it twice:
+1. **Deterministic checks in code** — route taken vs. expected, expected flag texts present, extra turns consumed, and for the hard-route scenario: zero dollar figures in the customer-facing reply and a routing packet present in state.
+2. **Cross-family LLM judge** (`judge.py`) — `openai/gpt-5.1` scores each scenario's rubric criteria `pass`/`partial`/`fail` with quoted evidence. The judge is deliberately not an Anthropic model (the drafts are written by claude-sonnet-5 — self-preference bias) and deliberately has **no fallback array**: the run fails rather than silently grading with a different model.
+
+Both runners emit JSON reports to `backend/eval_results/` (committed). The datasets and harness logic are covered by 20 no-network unit tests (dataset loaders/validators, matcher semantics, metric math, judge-output parsing); the full backend suite is 45 passed + 1 skip (the skip guards the retired SDG testset).
+
+```bash
+cd backend && uv run python -m app.evals.run_retrieval_eval --k 5 --json eval_results/retrieval_dense_baseline.json
+cd backend && uv run python -m app.evals.run_scenario_eval --json eval_results/scenario_eval_dense.json
+```
+
+**The two graders cross-check each other, and that caught two harness bugs.** Because every scenario is scored by both a deterministic check *and* the LLM judge, disagreements between them are diagnostic. Two surfaced on the first run: (1) the judge failed Q6's "routing packet exists with fired triggers" criterion while the deterministic `routing_packet_present` check passed it — the judge simply wasn't being shown the internal packet, so the fix was to add it to the judge's evidence (labelled internal, so it can't leak into the customer-facing criteria); (2) the deterministic flag check failed Q5's "pricing confidence LOW" flag on a too-literal substring match while the judge passed the equivalent criterion — fixed by matching flag words in order with small gaps. After both fixes, Q6 moved 2/0/2 → **3/0/1** and Q5's flag check went red → green, in each case aligning the harness with the behaviour the system actually produced. The remaining Q6 and Q5 failures are real (see below).
+
+## 5.3 Baseline results (dense retriever, run 2026-07-15)
+
+**Retrieval** (`retrieval_dense_baseline.json`), k=5:
+
+| Slice | n | hit@5 | MRR | Filter violations |
+|---|---|---|---|---|
+| **Overall** | 24 | **0.833** | **0.701** | **0** |
+| building_code | 9 | 0.889 | 0.889 | 0 |
+| builder_guideline | 5 | 0.800 | 0.700 | 0 |
+| past_project_quote | 5 | 0.800 | 0.600 | 0 |
+| zoning_bylaw | 5 | 0.800 | 0.467 | 0 |
+
+**Agent scenarios** (`scenario_eval_dense.json`) — deterministic route check + judge criteria:
+
+| Scenario (Task 1 eval question) | Route | Judge (pass / partial / fail) | Headline |
+|---|---|---|---|
+| Q1 complete spec | ✅ `draft` | 4 / 1 / 0 | Full categorized estimate, $58k on 900 sqft inside the guideline $/sqft band, HST + milestones + timeline present |
+| Q2 vague input | ❌ drafted (expected `ask`) | 2 / 0 / 1 | Asked good slot-filling questions first, but after two "proceed with assumptions" nudges it drafted with $ ranges despite scope = unknown |
+| Q3 code trigger (basement bedroom, no egress) | ✅ `draft` | 3 / 1 / 0 | Egress flagged **and priced** (concrete cutting, Tavily-sourced range) with OBC 9.9.10.1 cited on the line item |
+| Q4 tier delta (ESSENTIAL vs. SUPERIOR twin) | ✅ `draft` | 4 / 0 / 1 | Found the right comparable (S01), refused to copy the SUPERIOR total, flagged the tier discrepancy for the estimator — but never computed the line-item delta |
+| Q5 honest gap (sauna/wine-cellar/theatre) | ✅ `draft` | 2 / 1 / 1 | No fabricated comparables and pricing marked TBD-by-estimator, but the three unusual finishes silently vanished from the draft instead of being excluded per rule 5.18 |
+| Q6 commercial hard-route | ✅ `hard_route` | 3 / 0 / 1 | No draft, zero pricing language to the customer; routing packet with fired triggers present (judge-confirmed). One genuine gap: the customer reply never offers estimator follow-up |
+| Q7 citation quality (cross-cutting over Q1/Q3/Q4) | — | 3 / 8 / 0 | Code-driven and allowance-driven lines cite well (OBC clauses, P-codes, [PLACEHOLDER] → "rate unverified" all working); electrical/plumbing/PM lines still price without a trace |
+
+## 5.4 Conclusions
+
+1. **Retrieval is strong exactly where the product bet lives, and weak in ways that are keyword-shaped.** Clause-anchored building-code lookups — the "join" this product sells — hit rank 1 almost across the board (MRR 0.889). All four misses share a signature that dense embeddings are known-bad at: a vocabulary gap (customer says "legal second unit," the code calls it §9.41 "change of use"), a table lookup (R2 front-yard setback lives in a zone-standards table), a near-miss on sibling sections (§6/§6.3 retrieved when §6.1 was the target), and boilerplate-block retrieval by title. Zoning MRR (0.467) shows right-document-wrong-rank. This is precisely the case for Task 6's hybrid dense+BM25 retriever, with query rewriting (informal → code terminology) as the vocabulary-gap complement.
+2. **The agent's guardrails hold where they're deterministic and leak where they're prompt-enforced.** Zero filter violations (synthetic eval-twins never surfaced with the filter on), the hard-route path produced no draft and no dollar figures, and the §6.3 no-pricing rule held. But Q2 shows the premature-estimate guardrail is soft: pushed with "proceed with reasonable assumptions," the intake obliged and drafted $ ranges around an unknown scope — the guideline's "draft only when cost-driving slots are filled *or explicitly unknown*" needs a harder floor (e.g. scope itself can never be assumption-filled).
+3. **Citation discipline is real but uneven — and the eval pinpoints where.** The purpose-built paths work: egress lines cite OBC 9.9.10.1, comparables cite P-codes, [PLACEHOLDER]-derived quantities say "rate unverified." The gaps are systematic, not random: trade lines the corpus prices only implicitly (electrical, plumbing, project management) ship as bare dollar amounts, and smoke/CO-alarm requirements get mentioned without their 9.10.19/9.32.3.9 citations. That's a drafting-prompt fix (require a source line per priced item or mark it "estimator to price"), and it's measurable — Q7's criteria re-run before/after, which makes it a strong candidate for Task 6's evidence-backed second improvement.
+4. **Two honest-gap behaviors diverged (Q4 vs. Q5).** The agent reliably *refuses to fabricate* (right comparable chosen, no invented projects, no asserted total when confidence is low) but handles the resulting hole passively: the tier delta never got computed and the sauna/wine-cellar/theatre items disappeared rather than being explicitly excluded with count/location per rule 5.18. Refusal is the right instinct — the missing half is surfacing what was omitted.
+
+---
+
+*Tasks 6–7 are appended as they are completed.*

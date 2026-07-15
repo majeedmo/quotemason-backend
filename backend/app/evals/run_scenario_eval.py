@@ -38,10 +38,24 @@ def derive_route(state: dict) -> str:
     return "ask"
 
 
+def _flag_present(text: str, haystack: str) -> bool:
+    """A flag matches on contiguous substring, or on its words appearing in
+    order with short gaps — so 'Pricing confidence LOW' matches
+    'pricing confidence for the accessory-unit scope is LOW'."""
+    haystack = haystack.lower()
+    if text.lower() in haystack:
+        return True
+    tokens = re.findall(r"\w+", text.lower())
+    if not tokens:
+        return False
+    pattern = r"\b" + r"\b.{0,60}?\b".join(re.escape(tok) for tok in tokens) + r"\b"
+    return re.search(pattern, haystack, re.DOTALL) is not None
+
+
 def check_flags(expected_texts: list[str], state: dict) -> dict:
     """Every expected flag text must appear in the flags or the draft body."""
     haystack = json.dumps(state.get("flags") or []) + "\n" + (state.get("draft") or "")
-    found = {t: t.lower() in haystack.lower() for t in expected_texts}
+    found = {t: _flag_present(t, haystack) for t in expected_texts}
     return {"ok": all(found.values()), "found": found}
 
 

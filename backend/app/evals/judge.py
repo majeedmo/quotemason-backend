@@ -82,6 +82,11 @@ def _prompt(title: str, criteria: list[str], outcome: dict, answer_key: str | No
     ]
     if outcome.get("draft"):
         parts += ["", "DRAFT QUOTE (internal, estimator-facing):", outcome["draft"]]
+    if outcome.get("routing_packet"):
+        packet = {k: v for k, v in outcome["routing_packet"].items() if k != "transcript"}
+        parts += ["", "ROUTING PACKET (internal, estimator-facing — the packet handed to "
+                      "the estimator on a hard route; NOT shown to the customer):",
+                  json.dumps(packet, indent=2)]
     if answer_key:
         parts += ["", "GROUND-TRUTH ANSWER KEY (judge-only; the assistant has "
                       "never seen this document):", answer_key]

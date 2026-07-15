@@ -5,10 +5,23 @@ generator, then freezes it to ``app/evals/data/ragas_testset.jsonl`` (committed)
 Freezing matters: every eval run — including the Task 6 dense-vs-hybrid
 comparison — must score the identical question set.
 
-Generator LLM is the judge-family model (``settings.judge_model``, gpt-5.1 via
-OpenRouter): questions are authored by the same cross-family grader that scores
-answers, never by the Anthropic models that produce them. Embeddings are
-OpenAI-direct, matching the ingestion pairing.
+Generator LLM defaults to a fast OpenAI-family model (see ``--model``):
+questions are never authored by the Anthropic models that answer them, keeping
+the cross-family separation. Embeddings are OpenAI-direct, matching the
+ingestion pairing.
+
+STATUS (2026-07-15): deliberately not run — SDG is retired for this build.
+Generation proved slow and fragile in practice: gpt-5.1 as generator was ~10x
+slower and stall-prone over the hundreds of structured-output calls SDG makes;
+the plain LangChain wrapper had models answering in prose and crashing ragas's
+JSON parser mid-transform (fixed with the instructor tool-calling wrapper
+below); a handful of hung requests froze the pipeline at 98/103 until the
+explicit client timeout was added; and because output is only written at the
+very end, an overnight machine restart lost an entire run. Since the rubric
+accepts an assembled dataset ("either by generating synthetic data or by
+assembling an existing dataset"), the frozen Task 5 dataset is the
+hand-anchored golden set in ``app/evals/data/`` instead — exact clause-level
+ground truth the synthetic path couldn't match. Kept for reference/capstone.
 
 Live-API script — requires OPENROUTER_API_KEY and OPENAI_API_KEY. Run once:
 
