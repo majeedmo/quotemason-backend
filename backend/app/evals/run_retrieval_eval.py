@@ -8,12 +8,12 @@ collection and scores:
 - **violations** — retrieved chunks matching a ``forbidden`` matcher
   (e.g. synthetic quotes surfacing despite ``include_synthetic=False``)
 
-The retriever is selected by name so Task 6 can score alternatives on the
-identical dataset (``--retriever dense`` today; hybrid lands in Task 6).
+The retriever is selected by name so Task 6 scores alternatives on the
+identical dataset (``--retriever dense`` vs ``--retriever hybrid``).
 
 Live-API script (Qdrant + embeddings):
 
-    cd backend && uv run python -m app.evals.run_retrieval_eval [--k 5] [--json out.json]
+    cd backend && uv run python -m app.evals.run_retrieval_eval [--retriever dense|hybrid] [--k 5] [--json out.json]
 """
 
 from __future__ import annotations
@@ -75,10 +75,15 @@ def score_case(case: RetrievalCase, chunks) -> CaseResult:
 
 
 def make_retriever(name: str):
+    """Explicit by name and independent of settings.retriever, so the dense
+    baseline and the hybrid run are always compared apples-to-apples."""
     if name == "dense":
-        from app.retrieval import get_retriever
-        return get_retriever()
-    raise ValueError(f"unknown retriever {name!r} (hybrid lands in Task 6)")
+        from app.retrieval.retriever import CorpusRetriever
+        return CorpusRetriever()
+    if name == "hybrid":
+        from app.retrieval.hybrid import get_hybrid_retriever
+        return get_hybrid_retriever()
+    raise ValueError(f"unknown retriever {name!r} (expected 'dense' or 'hybrid')")
 
 
 def run(retriever_name: str = "dense", k: int = 5) -> dict:

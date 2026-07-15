@@ -374,4 +374,37 @@ cd backend && uv run python -m app.evals.run_scenario_eval --json eval_results/s
 
 ---
 
-*Tasks 6–7 are appended as they are completed.*
+# Task 6 — Improving the Prototype
+
+## 6a — Advanced retriever: hybrid dense + BM25
+
+**What and why (one to two sentences):** we added a lexical **BM25** index over the same chunks and fuse it with the existing dense search via **Reciprocal Rank Fusion**. Dense embeddings blur the exact clause numbers, defined terms, and tabular values that code/zoning text turns on ("§9.41", "change of use", the R2 front-yard setback) — the Task 5 baseline missed precisely those keyword/table cases, which is the textbook signal for adding keyword retrieval.
+
+Implementation (`backend/app/retrieval/hybrid.py`), chosen to keep the change low-risk:
+
+- **In-process, no Qdrant migration.** The dense side is the *unchanged* `CorpusRetriever`, so the baseline stays byte-for-byte identical for the comparison below. The BM25 index is built from `build_chunks()` — the same deterministic chunks ingestion embedded — so lexical and dense hits align 1:1 by text (no separate sparse-vector collection to provision or keep in sync).
+- **Clause-preserving tokenizer.** `9.9.10.1` and `26-007` tokenize as single tokens — the whole reason BM25 helps here.
+- **Identical metadata filters on both halves**, then RRF fusion (constant 60) — no score normalization needed across the cosine/BM25 scales. Both halves honour the same `doc_type`/jurisdiction/tier/`synthetic` filters, so the synthetic eval-twins still never leak.
+- **Config-flipped, reversible.** `settings.retriever` selects `hybrid` (now the agent default) or `dense`; the eval harness picks retrievers explicitly by name, independent of that flag, so comparisons stay apples-to-apples.
+
+## 6b — Performance vs. the original RAG
+
+Both retrievers scored on the identical 24-case hand-anchored golden set (`run_retrieval_eval.py`, k=5):
+
+| Slice | n | dense hit@5 | hybrid hit@5 | dense MRR | hybrid MRR | violations |
+|---|---|---|---|---|---|---|
+| **Overall** | 24 | 0.833 | **0.917** | 0.701 | **0.724** | 0 → 0 |
+| building_code | 9 | 0.889 | **1.000** | 0.889 | 0.870 | 0 |
+| zoning_bylaw | 5 | 0.800 | **1.000** | 0.467 | **0.640** | 0 |
+| past_project_quote | 5 | 0.800 | 0.800 | 0.600 | **0.700** | 0 |
+| builder_guideline | 5 | 0.800 | 0.800 | 0.700 | 0.567 | 0 |
+
+**What moved, case by case.** Two cases that dense missed entirely now hit — both exactly the failure mode we predicted: `bc-change-of-use` (OBC **9.41**, the informal-"legal second unit" → formal-"change of use" gap) went None → rank 2, and `zb-zone-standards` (the R2 front-yard setback **table**) went None → rank 2. Zoning — the weakest dense slice (MRR 0.467) — rose to 100% hit and 0.640 MRR, and the ARU cases climbed (`zb-aru-permitted` 2→1, `zb-aru-parking` 3→2).
+
+**The honest trade-off.** Hybrid is not free: three pure-semantic cases slipped a rank or two as BM25 nudged keyword-heavy chunks up — `bc-sound` 1→3, `zb-detached-aru` 2→5, and `gl-price-anchors` 1→3 (that last one is the whole builder_guideline MRR dip, 0.700→0.567). This is the expected profile of RRF: it recovers keyword/table/clause misses at the cost of small rank churn on cases dense already nailed. Net it is a clear win — +8 points of hit@5, higher MRR, **zero filter violations preserved** — and the two remaining misses (`gl-hard-route` §6.1, `pq-exclusions-block`) are pre-existing chunking/title-match issues that neither retriever solves and BM25 does not regress.
+
+*6c (second improvement) is delivered on a separate branch and appended when merged.*
+
+---
+
+*Task 7 is appended when complete.*

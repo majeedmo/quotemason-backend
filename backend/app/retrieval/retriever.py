@@ -120,5 +120,11 @@ class CorpusRetriever:
 
 
 @lru_cache(maxsize=1)
-def get_retriever() -> CorpusRetriever:
+def get_retriever():
+    """The retriever the agent uses. Dispatches on settings.retriever so the
+    hybrid upgrade is a config flip; the deferred import avoids a cycle
+    (hybrid imports CorpusRetriever)."""
+    if settings.retriever == "hybrid":
+        from app.retrieval.hybrid import get_hybrid_retriever
+        return get_hybrid_retriever()
     return CorpusRetriever()
