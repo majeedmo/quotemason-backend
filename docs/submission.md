@@ -403,7 +403,23 @@ Both retrievers scored on the identical 24-case hand-anchored golden set (`run_r
 
 **The honest trade-off.** Hybrid is not free: three pure-semantic cases slipped a rank or two as BM25 nudged keyword-heavy chunks up — `bc-sound` 1→3, `zb-detached-aru` 2→5, and `gl-price-anchors` 1→3 (that last one is the whole builder_guideline MRR dip, 0.700→0.567). This is the expected profile of RRF: it recovers keyword/table/clause misses at the cost of small rank churn on cases dense already nailed. Net it is a clear win — +8 points of hit@5, higher MRR, **zero filter violations preserved** — and the two remaining misses (`gl-hard-route` §6.1, `pq-exclusions-block`) are pre-existing chunking/title-match issues that neither retriever solves and BM25 does not regress.
 
-*6c (second improvement) is delivered on a separate branch and appended when merged.*
+## 6c — Second improvement: priced-line traceability (a different subsystem)
+
+The advanced retriever (6a) improves what the drafter *sees*; 6c improves what it *writes*. Task 5's cross-cutting q7 judge found a specific, recurring drafting gap: purpose-built lines cite well (egress → OBC 9.9.10.1, flooring → a P-code comparable, [PLACEHOLDER] rates → "rate unverified"), but **bundled trade lines — electrical, plumbing, HVAC, project management — shipped as bare dollar amounts with no source trace.** That is a generation problem, not a retrieval one, which makes it a genuinely different piece of the solution.
+
+**The change (both parts, doc-driven per project policy).** A new mandatory quoting rule, guideline **§5.19**, requires every dollar amount to show its source — ordered by preference: a comparable project code, a tier allowance or **[PLACEHOLDER] labour/material rate from the CSV** (marked "rate unverified"), or a price check — with contract-policy amounts (deposit §5.3, milestones §5.4–5.5, portable toilet §5.14, admin fees §5.6) citing their rule number, and `"estimator to price — no comparable on file"` reserved for lines nothing can ground. The rule lives in the guideline doc (source of truth, injected verbatim via `guidelines.section("5")`); the `DRAFT_SYSTEM` prompt enforces it. No code constants.
+
+**Hard evidence (before/after on the q7 judge, both on the hybrid agent).** Measured head-on by the criterion the gap maps to — *"every priced line traces to a source."* On the two scenarios that produced a draft in both runs (q1 complete-spec, q4 tier-delta):
+
+| q7 criterion | q1 before → after | q4 before → after |
+|---|---|---|
+| **Every priced line traces to a source** | partial → **pass** | partial → **pass** |
+| [PLACEHOLDER] rates marked "rate unverified" | pass → pass | pass → pass |
+| Excluded/capped items state count + location | pass → pass | pass → pass |
+
+Combined over q1+q4, q7 moved from **3 pass / 5 partial** to **6 pass / 2 partial (0 fail)** — every trace-criterion partial flipped to pass with nothing regressing. The judge's own evidence confirms the mechanism: the bundled trade lines that were bare numbers now read like *"Plumbing tie-in labour … (CSV labour rate, rate unverified)"*, and the milestone/deposit amounts now cite §5.3–5.5.
+
+**Honest caveats.** (1) This signal is variance-prone — each run regenerates live drafts and re-judges them — so it is reported as a matched before/after on the same retriever, not a single aggregate number. (2) The q3 code-trigger scenario intermittently hard-routes at intake (unrelated to this drafting change) and produced no draft in the after-run, so it is excluded from the matched pair rather than counted as a loss. (3) An intermediate version over-used the "estimator to price" escape hatch and *regressed* the rate-unverified criterion — the eval caught it, and the fix was the CSV-rate precedence now in §5.19, which satisfies both criteria at once. A supporting harness fix ships with this change: `run_scenario_eval --only` now pulls a cross-cutting scenario's judged drafts into the run (previously `--only q7-citation-quality` scored nothing).
 
 ---
 

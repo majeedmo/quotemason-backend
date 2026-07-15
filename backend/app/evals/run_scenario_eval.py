@@ -124,7 +124,18 @@ def run(only: str | None = None, use_judge: bool = True) -> dict:
     graph = build_graph(checkpointer=InMemorySaver())
     scenarios = load_agent_scenarios()
     if only:
-        scenarios = [s for s in scenarios if s.id == only or only in s.applies_to]
+        # Keep the selected scenario, plus the cross-cutting integrity both ways:
+        # selecting a cross-cutting scenario (e.g. q7) pulls in the drafts it
+        # judges (its applies_to), and selecting a draft pulls in the
+        # cross-cutting scenario that judges it (and that one's other targets).
+        keep = {only}
+        for s in scenarios:
+            if s.id == only:
+                keep.update(s.applies_to)
+            if only in s.applies_to:
+                keep.add(s.id)
+                keep.update(s.applies_to)
+        scenarios = [s for s in scenarios if s.id in keep]
 
     llm = judge_model() if use_judge else None
     outcomes: dict[str, dict] = {}
