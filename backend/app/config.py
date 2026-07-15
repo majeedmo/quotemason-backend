@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     qdrant_collection: str = "estimator_corpus"
     qdrant_local_path: Path = BACKEND_DIR / "qdrant_local"
 
+    # Retriever the agent uses: "hybrid" (dense + BM25 + RRF, Task 6) or "dense".
+    # The eval harness selects retrievers explicitly by name, independent of this.
+    retriever: str = "hybrid"
+
     openrouter_api_key: str = ""
     drafting_model: str = "anthropic/claude-sonnet-5"
     intake_model: str = "anthropic/claude-haiku-4.5"
