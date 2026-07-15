@@ -439,30 +439,24 @@ These are demo-ready and load-bearing, so they stay as-is:
 - **The eval harness (hand-anchored golden set + cross-family gpt-5.1 judge) plus LangSmith estimator-edit logging.** It is both the regression guard for every future change and the seed of the data flywheel (each estimator edit is a labeled example).
 - **Memory (Upstash checkpointer), async draft-in-background, and the Vercel + Render deployment.** All working end-to-end; no reason to touch them for the demo.
 
-## 7.2 What I would change or improve
+## 7.2 What I would change or improve (the capstone plan)
 
-Tagged **[near-term]** (feasible before Demo Day) or **[capstone]** (post-challenge).
+### 1. Quote-accuracy evaluation — the priority
+The eval harness so far measures retrieval hit-rate and citation form — proxies for quality. It never measures the product's actual promise: how close the agent's estimate lands to what the contractor really charged. The real past-project quotes make that directly measurable.
 
-### 1. Material pricing — replace live web search with a price tool/data source
-The current Tavily `pricing_node` (`app/agent/nodes.py:154`) runs a live per-draft web search. It is slow, non-deterministic, rate-limited, and hard to evaluate — it was a measurable source of the run-to-run variance in the 6c before/after.
+- **Leave-one-out accuracy on real projects.** Hold a project out of retrieval (a `must_not` on its `project_code` — a filter `CorpusRetriever` already supports), have the agent estimate it from only its spec (sqft / tier / scope), and compare the result to the actual quote on three axes: total-dollar error, line-item coverage (did it catch the egress and other code-driven items the real quote carried?), and citation correctness.
+- *Reasoning:* this turns the pitch from "the AI writes a quote" into "the AI's estimate lands within X% of the real one, on held-out jobs" — a number no proxy metric gives, anchored to the revised-pairs finding that real first drafts miss by ±12–26%. It reuses the existing retriever filter and golden-set runner, and it gives every other improvement a dollar-denominated scoreboard.
 
-- **[near-term]** Give the drafter a **tool to read a local daily price CSV**, reusing the allowances-CSV pattern the drafter already consumes. Deterministic and cacheable, which also makes the pricing path eval-friendly.
-- **[capstone]** A **separate scheduled agent** pulls a big-box retailer's prices (e.g. Home Depot, via a direct or third-party API, or scraping) once every 24 hours into that CSV; expose the price table to the drafter as a **tool / MCP server**; add **caching** for speed. This aligns with the data-freshness strategy already sketched in the project brief.
+### 2. Material pricing — replace live web search with a price tool/data source
+The current Tavily `pricing_node` (`app/agent/nodes.py:154`) runs a live per-draft web search — slow, non-deterministic, rate-limited, and hard to evaluate (a measurable source of the run-to-run variance in the 6c before/after). Replace it with a **daily price CSV the drafter reads through a tool / MCP server**, refreshed by a **separate scheduled agent** that pulls a big-box retailer's prices (e.g. Home Depot, via a direct or third-party API, or scraping) once every 24 hours, with caching for speed. Deterministic, cacheable, eval-friendly, and it reuses the allowances-CSV pattern the drafter already consumes; it also aligns with the data-freshness strategy sketched in the project brief.
 
-### 2. Guardrails — duplicate-quote prevention
-- **[near-term]** On draft creation, reject or flag when the **same email** submitted a quote within a time window, and when the **same address** (street + city) was used within a window.
+### 3. Guardrails — duplicate-quote prevention
+On draft creation, reject or flag when the **same email** submitted a quote within a time window, and when the **same address** (street + city) was used within a window.
 - *Reasoning:* prevents spam/abuse and stops duplicate drafts from clogging the estimator's queue. It is cheap because the data already exists — the `routing_packet` carries the client email and `property_location`, and `quote_drafts` records every draft — so this is a query-on-create check, not new infrastructure.
 
-### 3. Estimator security — authentication
-Today `/estimator` is intentionally no-auth (single-persona demo convenience).
-
-- **[near-term]** Add **basic authentication** to the `/estimator` console so it is not openly accessible.
-- **[capstone]** Add **roles and backend API authorization** — protect the `/quotes` endpoints and scope access per estimator.
-- *Reasoning:* open access is acceptable for a solo demo, but the console exposes client PII and draft quotes. Basic auth is the minimal near-term protection; role-based authorization on the API is the real fix.
-
-### 4. More grounding data
-- **[capstone]** Add **at least one more municipality's zoning bylaw** (this validates the shared-collection, jurisdiction-filtered design — populate, don't re-architect); **more past-project quotes** for better comparables and wider tier-pair coverage; and **refine/expand the builder guidelines**, including the owner's review of `[PLACEHOLDER]` rates into `[GROUNDED]` ones.
-- *Reasoning:* grounding breadth and quality is the single biggest quality lever, and closing the `[PLACEHOLDER]` gap directly strengthens the "rate unverified" traceability the 6c improvement depends on. The architecture already supports all three — these are data tasks, not redesigns.
+### 4. Estimator security — authentication
+Today `/estimator` is intentionally no-auth (single-persona demo convenience). Add **authentication to the console** and, on the backend, **roles and API authorization** that protect the `/quotes` endpoints and scope access per estimator.
+- *Reasoning:* open access is fine for a solo demo, but the console exposes client PII and draft quotes; the review gate belongs behind a login and the API behind role checks.
 
 ---
 
