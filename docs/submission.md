@@ -1,7 +1,6 @@
 # Certification Challenge — Written Submission
 
 **QuoteMason** — an agentic estimation assistant for residential renovation contractors · AI Engineering Certification Challenge (AI Maker Space v1.0)
-Task instructions: [`challenge-instructions.md`](challenge-instructions.md) · Full project rationale: [`project-brief.md`](project-brief.md)
 
 ---
 
@@ -19,7 +18,7 @@ Task instructions: [`challenge-instructions.md`](challenge-instructions.md) · F
 
 **How they handle it today:** visit the property or review submitted specs and photos; calculate a rough material takeoff from experience-based rules of thumb that are undocumented and vary estimator-to-estimator; call or browse supplier sites for current prices; separately try to recall (or look up in a 1,200-page PDF) the zoning and building-code triggers — egress for a basement bedroom, fire separation for a second unit; occasionally dig through old files for a comparable past job, a step usually skipped under time pressure; then assemble the quote in Excel/Word for internal review.
 
-**Why that isn't good enough:** it takes hours to days per quote; results are inconsistent across estimators; pricing is often stale by send time; and a missed code trigger doesn't surface until permitting or inspection, triggering change orders and damaged client trust. Slow turnaround also loses bids outright to faster-quoting competitors. Our mining of Company A's own revised quotes quantifies the pain: **first-draft quotes were revised by −26%, −12%, and +18%** — one revision was entirely caused by a missed scope/code fork (finished basement vs. legal accessory apartment) worth **+$12,500** ([full analysis](revised-pairs-analysis.md)).
+**Why that isn't good enough:** it takes hours to days per quote; results are inconsistent across estimators; pricing is often stale by send time; and a missed code trigger doesn't surface until permitting or inspection, triggering change orders and damaged client trust. Slow turnaround also loses bids outright to faster-quoting competitors. Our mining of Company A's own revised quotes quantifies the pain: **first-draft quotes were revised by −26%, −12%, and +18%** — one revision was entirely caused by a missed scope/code fork (finished basement vs. legal accessory apartment) worth **+$12,500**.
 
 ## 1.3 Current-state workflow diagram
 

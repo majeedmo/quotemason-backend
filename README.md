@@ -2,9 +2,9 @@
 
 **An agentic estimation assistant for residential renovation contractors.**
 
-AI Engineering Certification Challenge (AI Maker Space v1.0 — original task instructions: [`docs/challenge-instructions.md`](docs/challenge-instructions.md)). QuoteMason runs structured intake for residential basement-renovation requests, retrieves comparable past projects, builder guidelines, Ontario Building Code Part 9, and Cambridge (ON) zoning provisions, checks current material pricing via Tavily, and drafts a fully cited quote — which a human estimator always reviews before anything reaches a client.
+AI Engineering Certification Challenge (AI Maker Space v1.0). QuoteMason runs structured intake for residential basement-renovation requests, retrieves comparable past projects, builder guidelines, Ontario Building Code Part 9, and Cambridge (ON) zoning provisions, checks current material pricing via Tavily, and drafts a fully cited quote — which a human estimator always reviews before anything reaches a client.
 
-Project context, scope decisions, and open items: [`docs/project-brief.md`](docs/project-brief.md) · agent working rules: [`CLAUDE.md`](CLAUDE.md)
+The full written submission is in [`docs/submission.md`](docs/submission.md).
 
 ## Live deployment
 
@@ -26,7 +26,7 @@ quotes/                     ORIGINALS — gitignored, never committed (PII)
 scripts/                    Data prep: OBC extraction, quote redaction, bylaw refresh stub
 backend/                    Python (uv) — ingestion, retrieval, LangGraph agent,
                             FastAPI (intake chat + estimator review gate)
-docs/                       Brief, analyses, eval ground truth, challenge instructions
+docs/                       Written submission + eval Q4 ground truth
 ```
 
 The Next.js frontend (landing page for the fictional "Maplewood Renovations"
@@ -83,5 +83,3 @@ Three responsive routes (phone + laptop requirement): `/` fictional-contractor l
 
 - Client PII is redacted before any processing (`scripts/redact_quotes.py`); house numbers are anonymized, street + city kept for zoning context.
 - Partner businesses are referred to as Company A / B / C only.
-
-Details: `docs/project-brief.md` § Data-handling policies.
