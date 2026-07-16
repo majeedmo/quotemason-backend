@@ -4,7 +4,9 @@
 
 AI Engineering Certification Challenge (AI Maker Space v1.0). QuoteMason runs structured intake for residential basement-renovation requests, retrieves comparable past projects, builder guidelines, Ontario Building Code Part 9, and Cambridge (ON) zoning provisions, checks current material pricing via Tavily, and drafts a fully cited quote — which a human estimator always reviews before anything reaches a client.
 
-The full written submission is in [`docs/submission.md`](docs/submission.md).
+The full written submission is in [`docs/submission.md`](docs/submission.md), with a task→code traceability map in [`docs/deliverables.md`](docs/deliverables.md).
+
+**Demo video (≤10 min):** <https://www.loom.com/share/c5fc1f064dd24c2290264a0e48bc0915>
 
 ## Live deployment
 

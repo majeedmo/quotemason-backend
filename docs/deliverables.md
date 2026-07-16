@@ -6,7 +6,7 @@ This document maps every task deliverable from the challenge to (a) where it is 
 
 **Live deployment:** frontend <https://quotemason-frontend.vercel.app> · backend API <https://quotemason-api.onrender.com> (docs at `/docs`)
 **Repos:** backend `quotemason-backend` (this repo) · frontend `quotemason-frontend` (separate)
-**Demo video:** see repo README / submission link
+**Demo video (≤10 min):** <https://www.loom.com/share/c5fc1f064dd24c2290264a0e48bc0915>
 **Reference paths below are repo-relative; line numbers are anchors at time of writing and may drift — the named symbol is authoritative.**
 
 ---
@@ -74,6 +74,6 @@ This document maps every task deliverable from the challenge to (a) where it is 
 | Required | Location |
 |---|---|
 | Public GitHub repo with all code | this repo (`quotemason-backend`) + `quotemason-frontend` |
-| ≤10-min Loom demo (live demo + use case) | linked in repo `README.md` / submission |
+| ≤10-min Loom demo (live demo + use case) | <https://www.loom.com/share/c5fc1f064dd24c2290264a0e48bc0915> |
 | Written document addressing each deliverable | **[`submission.md`](submission.md)** (narrative) + this **`deliverables.md`** (traceability) |
 | All relevant code | `backend/`, `corpus/`, `scripts/`, `render.yaml` |
