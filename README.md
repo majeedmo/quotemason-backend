@@ -2,9 +2,16 @@
 
 **An agentic estimation assistant for residential renovation contractors.**
 
-AI Engineering Certification Challenge (AI Maker Space v1.0 — original task instructions: [`docs/challenge-instructions.md`](docs/challenge-instructions.md)). QuoteMason runs structured intake for residential basement-renovation requests, retrieves comparable past projects, builder guidelines, Ontario Building Code Part 9, and Cambridge (ON) zoning provisions, checks current material pricing via Tavily, and drafts a fully cited quote — which a human estimator always reviews before anything reaches a client.
+AI Engineering Certification Challenge (AI Maker Space v1.0). QuoteMason runs structured intake for residential basement-renovation requests, retrieves comparable past projects, builder guidelines, Ontario Building Code Part 9, and Cambridge (ON) zoning provisions, checks current material pricing via Tavily, and drafts a fully cited quote — which a human estimator always reviews before anything reaches a client.
 
-Project context, scope decisions, and open items: [`docs/project-brief.md`](docs/project-brief.md) · agent working rules: [`CLAUDE.md`](CLAUDE.md)
+The full written submission is in [`docs/submission.md`](docs/submission.md).
+
+## Live deployment
+
+- **Frontend (Vercel):** <https://quotemason-frontend.vercel.app> — landing page, `/estimate` intake chat, `/estimator` review console
+- **Backend API (Render):** <https://quotemason-api.onrender.com> — FastAPI; interactive docs at [`/docs`](https://quotemason-api.onrender.com/docs)
+
+Render's free tier spins the API down when idle — the first request after a quiet period can take ~a minute to cold-start.
 
 ## Layout
 
@@ -19,12 +26,13 @@ quotes/                     ORIGINALS — gitignored, never committed (PII)
 scripts/                    Data prep: OBC extraction, quote redaction, bylaw refresh stub
 backend/                    Python (uv) — ingestion, retrieval, LangGraph agent,
                             FastAPI (intake chat + estimator review gate)
-docs/                       Brief, analyses, eval ground truth, challenge instructions
+docs/                       Written submission + eval Q4 ground truth
 ```
 
 The Next.js frontend (landing page for the fictional "Maplewood Renovations"
 brand, `/estimate` intake chat, `/estimator` review console) lives in a
-**separate repo**: `quotemason-frontend` (deployed to Vercel).
+**separate repo**: `quotemason-frontend` (deployed to Vercel at
+<https://quotemason-frontend.vercel.app>).
 
 The source PDFs (2024 OBC compendium, Cambridge By-law 26-007) are **not
 committed** — they're large, re-downloadable from official Ontario/Cambridge
@@ -75,5 +83,3 @@ Three responsive routes (phone + laptop requirement): `/` fictional-contractor l
 
 - Client PII is redacted before any processing (`scripts/redact_quotes.py`); house numbers are anonymized, street + city kept for zoning context.
 - Partner businesses are referred to as Company A / B / C only.
-
-Details: `docs/project-brief.md` § Data-handling policies.

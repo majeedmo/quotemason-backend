@@ -1,0 +1,129 @@
+[
+  {
+    "id": "q1-complete-spec",
+    "title": "Complete spec: full estimate without unnecessary follow-ups",
+    "turns": [
+      "Hi! I'd like to finish my basement at Cedar Hedge Road in Mississauga. It's about 900 sqft — one bedroom, one full bathroom (the rough-in is already there), laminate flooring, and an open rec area. No kitchen, just space for a small wet bar. Mid-range finishes — your SUPERIOR package looks right. Budget around $55k.",
+      "Ceiling is just over 8 feet with one small bulkhead. Subfloor is bare level concrete. Stairs stay where they are. Electrical panel is 200 amps. There's a small cold room under the porch we'd keep as storage. No separate entrance needed. The bedroom window is already a big egress-size window."
+    ],
+    "expected_route": "draft",
+    "expected_flag_texts": [],
+    "judge_criteria": [
+      "Intake completes within the scripted turns with at most one clarifying question beyond them",
+      "Draft is a full estimate organized by work categories (flooring, primer+paint, partitions+insulation, electrical, plumbing, millwork, project management at minimum)",
+      "Total lands inside the guideline S8 finished-basement band (~$45-65/sqft on ~900 sqft) or explains why it deviates",
+      "States HST is excluded, includes a milestone payment schedule and the 8-10 week finished-basement timeline",
+      "Any slot the customer did not resolve appears under Assumptions per rule 5.11"
+    ],
+    "references": {},
+    "applies_to": []
+  },
+  {
+    "id": "q2-vague",
+    "title": "Vague input: guided follow-up, not a premature estimate",
+    "turns": [
+      "I want to renovate."
+    ],
+    "expected_route": "ask",
+    "expected_flag_texts": [],
+    "judge_criteria": [
+      "Response asks a structured follow-up question aimed at the intake slots (scope, size, location, finishes)",
+      "Contains no dollar amounts, no estimate, and no draft",
+      "Does not assume a scope the customer never stated"
+    ],
+    "references": {},
+    "applies_to": []
+  },
+  {
+    "id": "q3-code-trigger",
+    "title": "Code trigger: basement bedroom without a second egress",
+    "turns": [
+      "We're finishing the basement of our house on Fairview Road in Cambridge — about 800 sqft. We want one bedroom for my son, a 3-piece bathroom where the rough-in already is, and vinyl plank flooring everywhere. Keep it budget-friendly — the ESSENTIAL package.",
+      "Ceiling height is about 7 foot 10. Bare concrete subfloor, level. Stairs stay as they are. The panel is 100 amps. No cold room. No separate entrance. The windows are just the small original basement windows — nothing has been enlarged or replaced."
+    ],
+    "expected_route": "draft",
+    "expected_flag_texts": [],
+    "judge_criteria": [
+      "Draft flags that a basement bedroom requires an egress window citing OBC 9.9.10 (openable without tools, 0.35 m2 unobstructed, no dimension under 380 mm)",
+      "Includes a priced line item for the egress window / window enlargement (concrete cutting), not just a mention",
+      "The egress line item carries its OBC citation per quoting rule 5.15",
+      "Smoke/CO alarm requirements (OBC 9.10.19 / 9.32.3.9) are addressed for the bedroom storey"
+    ],
+    "references": {},
+    "applies_to": []
+  },
+  {
+    "id": "q4-tier-delta",
+    "title": "Tier delta: same spec as a past project, different package tier",
+    "turns": [
+      "We're on Alfred Hughes Ave in Oakville and want to finish our basement — it's large, about 1,560 sqft. We'd like a kitchenette with a wet bar, one full bathroom, a powder room, an open rec area and a den. We want to keep the cost down, so your ESSENTIAL package with LVP flooring.",
+      "Ceiling is over 8 feet, only minor bulkheads. The full-bathroom rough-in exists. Bare concrete subfloor. Stairs stay. 200 amp panel. There's a cold room to keep as-is. No separate entrance. The den is a den, not a bedroom — no one sleeps down there, and the windows are decent-sized but I don't know exact dimensions."
+    ],
+    "expected_route": "draft",
+    "expected_flag_texts": [],
+    "judge_criteria": [
+      "Draft retrieves and cites the matching Oakville finished-basement comparable(s) (P19 and/or its ESSENTIAL twin S01)",
+      "Estimated total is consistent with the ESSENTIAL ground truth (~$62,000) within +/-25%, not the SUPERIOR comparable's $77,500 copied unadjusted",
+      "Where pricing is adjusted down from a SUPERIOR comparable, the reduction traces to tier-controlled categories (kitchenette/wet bar, bathroom finishes, paint, millwork, electrical fixtures) per the allowances table",
+      "Code-driven items (egress, framing/insulation/drywall, rough-ins, project management) are NOT presented as tier savings",
+      "No fabricated scope differences between tiers"
+    ],
+    "references": {
+      "answer_key": "docs/eval-q4-synthetic-pairs.md",
+      "pair": "P19 (SUPERIOR, $77,500) vs S01 (ESSENTIAL, $62,000), delta $15,500"
+    },
+    "applies_to": []
+  },
+  {
+    "id": "q5-honest-gap",
+    "title": "Honest gaps: no close past-project match",
+    "turns": [
+      "I want to convert my basement on Woolwich Street in Guelph into a high-end legal rental suite — SUPREME everything. It's about 2,200 sqft. Full kitchen, two full bathrooms, plus a sauna, a wine cellar, and a home theatre room.",
+      "Ceiling is 9 feet, no bulkheads. Subfloor is bare concrete. Stairs stay. The panel is 200 amps. No cold room. There's an existing walkout entrance at grade. Bedroom windows are large — I believe they already meet egress. Budget is up to $250k and we're not in a rush."
+    ],
+    "expected_route": "draft",
+    "expected_flag_texts": [
+      "Pricing confidence LOW"
+    ],
+    "judge_criteria": [
+      "Draft carries the S6.2 'no close comparable' flag (pricing confidence LOW) rather than silently extrapolating",
+      "Does not fabricate a comparable project — no invented project codes or 'we did a similar sauna project' claims",
+      "Sauna, wine cellar, and home theatre are either excluded with explicit count/location per rule 5.18, marked as allowance-undefined items needing estimator input, or priced with clearly stated unverified-rate caveats",
+      "The accessory-unit code package (egress, fire separation, alarms, second-unit change of use 9.41) still appears despite the unusual finishes"
+    ],
+    "references": {},
+    "applies_to": []
+  },
+  {
+    "id": "q6-hard-route",
+    "title": "Scope boundary: commercial request hard-routes to the estimator",
+    "turns": [
+      "I'm opening a restaurant in Cambridge and need the 6,000 sqft space fitted out — commercial kitchen line, dining room, bar, and two washrooms. Can you give me a quote?"
+    ],
+    "expected_route": "hard_route",
+    "expected_flag_texts": [],
+    "judge_criteria": [
+      "Recognizes the request as out of scope (commercial + size out of band, guideline S6.1) and does not draft",
+      "Response to the customer contains no pricing language and no dollar figures at all (S6.3)",
+      "Acknowledges politely, says the project needs the estimator's direct attention, and asks to confirm contact details / best time",
+      "A routing packet for the estimator exists with the fired trigger(s) and matched text"
+    ],
+    "references": {},
+    "applies_to": []
+  },
+  {
+    "id": "q7-citation-quality",
+    "title": "Citation quality: every line item explains why it costs what it does",
+    "turns": [],
+    "expected_route": "draft",
+    "expected_flag_texts": [],
+    "judge_criteria": [
+      "Every code-driven line item cites its specific OBC or zoning clause (e.g. egress -> 9.9.10, alarms -> 9.10.19/9.32.3.9, suite conversion -> 9.41), not a vague 'per code'",
+      "Every priced line traces to a source: a comparable project code, a tier allowance from the guidelines, or a current price check",
+      "Line items derived from [PLACEHOLDER] labor rates are marked 'rate unverified'",
+      "Excluded or capped items state count and location explicitly per rule 5.18"
+    ],
+    "references": {},
+    "applies_to": ["q1-complete-spec", "q3-code-trigger", "q4-tier-delta"]
+  }
+]
