@@ -457,7 +457,3 @@ On draft creation, reject or flag when the **same email** submitted a quote with
 ### 4. Estimator security — authentication
 Today `/estimator` is intentionally no-auth (single-persona demo convenience). Add **authentication to the console** and, on the backend, **roles and API authorization** that protect the `/quotes` endpoints and scope access per estimator.
 - *Reasoning:* open access is fine for a solo demo, but the console exposes client PII and draft quotes; the review gate belongs behind a login and the API behind role checks.
-
----
-
-*Tasks 1–7 complete. Remaining for submission: the Loom demo video.*
