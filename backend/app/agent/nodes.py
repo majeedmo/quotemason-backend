@@ -147,7 +147,8 @@ def retrieve_node(state: AgentState) -> dict:
     if accessory:
         retrieved["zoning_bylaw"] = pack(
             r.search_zoning("additional residential unit basement apartment "
-                            "requirements parking", k=3))
+                            "requirements parking", k=3,
+                            jurisdiction=settings.zoning_jurisdiction))
     return {"retrieved": retrieved}
 
 

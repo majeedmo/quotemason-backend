@@ -29,9 +29,11 @@ _FILLER = [
     _chunk("[Cambridge Zoning 4.19 — ARUs] parking additional residential unit",
            doc_type="zoning_bylaw", jurisdiction="cambridge", section_number="4.19"),
     _chunk("[Company A guidelines — 5 Quoting Rules] HST deposit milestones",
-           doc_type="builder_guideline", section_number="5"),
+           doc_type="builder_guideline", section_number="5",
+           contractor_id="company-a"),
     _chunk("[Past project P07] flooring laminate rec room finished basement",
-           doc_type="past_project_quote", project_code="P07", synthetic=False),
+           doc_type="past_project_quote", project_code="P07", synthetic=False,
+           contractor_id="company-a"),
 ]
 
 
@@ -82,7 +84,8 @@ def test_helpers_pass_correct_filters_to_dense():
     r = HybridRetriever(dense=dense, chunks=_FILLER)
     r.search_past_quotes("stairs", k=3, package_tier="SUPREME", include_synthetic=False)
     call = dense.calls[-1]
-    assert call.must == {"doc_type": "past_project_quote", "city": None,
+    assert call.must == {"doc_type": "past_project_quote",
+                         "contractor_id": "company-a", "city": None,
                          "package_tier": "SUPREME", "scope": None}
     assert call.must_not == {"synthetic": True}
 
@@ -90,9 +93,11 @@ def test_helpers_pass_correct_filters_to_dense():
 def test_bm25_honours_synthetic_exclusion():
     extra = [
         _chunk("[Past project S01 (SYNTHETIC)] sauna wine cellar theatre",
-               doc_type="past_project_quote", project_code="S01", synthetic=True),
+               doc_type="past_project_quote", project_code="S01", synthetic=True,
+               contractor_id="company-a"),
         _chunk("[Past project P19] sauna wine cellar theatre",
-               doc_type="past_project_quote", project_code="P19", synthetic=False),
+               doc_type="past_project_quote", project_code="P19", synthetic=False,
+               contractor_id="company-a"),
     ]
     r = _hybrid(extra)
     codes = [h.metadata["project_code"]

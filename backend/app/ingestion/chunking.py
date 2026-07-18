@@ -184,7 +184,8 @@ _MD_HEADING = re.compile(r"^(#{2,3})\s+(.+)$", re.M)
 
 
 def chunk_guideline_md(doc: CorpusDoc) -> list[Chunk]:
-    prefix = "[Company A builder guidelines ({source_version}) — {num} {title}]"
+    contractor = doc.metadata.get("contractor_name", "Builder")
+    prefix = f"[{contractor} builder guidelines ({{source_version}}) — {{num}} {{title}}]"
     heads = list(_MD_HEADING.finditer(doc.text))
     if not heads:
         return _emit(doc, [("", str(doc.metadata.get("title", "")), doc.text)], prefix)
@@ -212,7 +213,8 @@ def chunk_guideline_csv(doc: CorpusDoc) -> list[Chunk]:
         groups.setdefault(key, []).append(r)
     sections = [(key, f"{doc.metadata.get('title', '')} — {key}",
                  header + "\n" + "\n".join(rs)) for key, rs in groups.items()]
-    return _emit(doc, sections, "[Company A rate/allowance table {title}]")
+    contractor = doc.metadata.get("contractor_name", "Builder")
+    return _emit(doc, sections, f"[{contractor} rate/allowance table {{title}}]")
 
 
 # --- zoning bylaw ---------------------------------------------------------------

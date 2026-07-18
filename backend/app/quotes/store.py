@@ -25,6 +25,7 @@ _SCHEMA = """
 CREATE TABLE IF NOT EXISTS quote_drafts (
     id                 SERIAL PRIMARY KEY,
     thread_id          TEXT NOT NULL,
+    contractor_id      TEXT,
     version            INTEGER NOT NULL,
     draft_md           TEXT NOT NULL,
     routing_packet     JSONB,
@@ -34,6 +35,7 @@ CREATE TABLE IF NOT EXISTS quote_drafts (
     updated_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (thread_id, version)
 );
+ALTER TABLE quote_drafts ADD COLUMN IF NOT EXISTS contractor_id TEXT;
 CREATE INDEX IF NOT EXISTS idx_quote_drafts_status
     ON quote_drafts (status);
 """
@@ -65,11 +67,12 @@ class QuoteStore:
                 "WHERE thread_id = %s AND status = ANY(%s)",
                 (thread_id, list(ACTIVE_STATUSES)))
             return c.execute(
-                "INSERT INTO quote_drafts (thread_id, version, draft_md, routing_packet) "
-                "VALUES (%s, COALESCE((SELECT max(version) FROM quote_drafts "
-                "                      WHERE thread_id = %s), 0) + 1, %s, %s) "
+                "INSERT INTO quote_drafts "
+                "(thread_id, contractor_id, version, draft_md, routing_packet) "
+                "VALUES (%s, %s, COALESCE((SELECT max(version) FROM quote_drafts "
+                "                          WHERE thread_id = %s), 0) + 1, %s, %s) "
                 "RETURNING *",
-                (thread_id, thread_id, draft_md,
+                (thread_id, settings.contractor_id, thread_id, draft_md,
                  json.dumps(routing_packet) if routing_packet else None),
             ).fetchone()
 
