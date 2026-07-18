@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS quote_drafts (
     version            INTEGER NOT NULL,
     draft_md           TEXT NOT NULL,
     routing_packet     JSONB,
+    stage_outputs      JSONB,
     status             TEXT NOT NULL DEFAULT 'pending_review',
     estimator_edit_md  TEXT,
     created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -36,6 +37,7 @@ CREATE TABLE IF NOT EXISTS quote_drafts (
     UNIQUE (thread_id, version)
 );
 ALTER TABLE quote_drafts ADD COLUMN IF NOT EXISTS contractor_id TEXT;
+ALTER TABLE quote_drafts ADD COLUMN IF NOT EXISTS stage_outputs JSONB;
 CREATE INDEX IF NOT EXISTS idx_quote_drafts_status
     ON quote_drafts (status);
 """
@@ -59,7 +61,8 @@ class QuoteStore:
             c.execute(_SCHEMA)
 
     def create_draft(self, thread_id: str, draft_md: str,
-                     routing_packet: dict | None = None) -> dict[str, Any]:
+                     routing_packet: dict | None = None,
+                     stage_outputs: dict | None = None) -> dict[str, Any]:
         """Insert the next version for this thread, superseding any active one."""
         with self._conn() as c:
             c.execute(
@@ -67,13 +70,14 @@ class QuoteStore:
                 "WHERE thread_id = %s AND status = ANY(%s)",
                 (thread_id, list(ACTIVE_STATUSES)))
             return c.execute(
-                "INSERT INTO quote_drafts "
-                "(thread_id, contractor_id, version, draft_md, routing_packet) "
+                "INSERT INTO quote_drafts (thread_id, contractor_id, version, "
+                "draft_md, routing_packet, stage_outputs) "
                 "VALUES (%s, %s, COALESCE((SELECT max(version) FROM quote_drafts "
-                "                          WHERE thread_id = %s), 0) + 1, %s, %s) "
+                "                          WHERE thread_id = %s), 0) + 1, %s, %s, %s) "
                 "RETURNING *",
                 (thread_id, settings.contractor_id, thread_id, draft_md,
-                 json.dumps(routing_packet) if routing_packet else None),
+                 json.dumps(routing_packet) if routing_packet else None,
+                 json.dumps(stage_outputs) if stage_outputs else None),
             ).fetchone()
 
     def get(self, quote_id: int) -> dict[str, Any] | None:

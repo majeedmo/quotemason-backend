@@ -67,7 +67,7 @@ uv run pytest
 
 Ingestion is structure-aware (OBC articles, quote work-categories, guideline sections — never fixed token windows), stamps every chunk with `{jurisdiction, doc_type, section_number, source_version, …}`, prefixes the citation into the chunk text, and upserts with deterministic IDs into one shared collection filtered at query time.
 
-The agent graph runs `intake → (ask | hard-route | retrieve → pricing → draft)`, checkpointed in Upstash Redis (conversation memory). Completed drafts persist to Neon Postgres as versioned `quote_drafts` rows for the estimator review gate: `GET /quotes` (queue) · `POST /quotes/{id}/edit` (logged to LangSmith as labeled eval data) · `POST /quotes/{id}/revise` (resumes the same thread, new version supersedes) · `POST /quotes/{id}/approve` (returns a `mailto:` stand-in — the agent never sends anything itself).
+The agent graph runs `intake → (ask | hard-route | codes → takeoff → price-fill → draft)` — a staged drafting pipeline (applicable codes via the shared regulatory tool, structured material takeoff, deterministic sheet-first price resolution with web fallback, then the cited draft) — checkpointed in Upstash Redis (conversation memory). Completed drafts persist to Neon Postgres as versioned `quote_drafts` rows for the estimator review gate: `GET /quotes` (queue) · `POST /quotes/{id}/edit` (logged to LangSmith as labeled eval data) · `POST /quotes/{id}/revise` (resumes the same thread, new version supersedes) · `POST /quotes/{id}/approve` (returns a `mailto:` stand-in — the agent never sends anything itself).
 
 ## Frontend quickstart
 
