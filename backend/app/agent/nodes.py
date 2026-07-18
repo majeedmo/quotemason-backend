@@ -12,6 +12,7 @@ from app.agent.llm import drafting_model, intake_model
 from app.agent.state import AgentState
 from app.config import settings
 from app.retrieval import get_retriever
+from app.tools import regulatory
 
 _FENCE = re.compile(r"^```(?:json)?\s*|\s*```$", re.M)
 _JSON_START = re.compile(r'\{\s*"')
@@ -114,8 +115,6 @@ def retrieve_node(state: AgentState) -> dict:
     for t in ("ESSENTIAL", "SUPERIOR", "SUPREME"):
         if t in tb.upper():
             tier = t
-    accessory = "accessory" in scope.lower()
-
     def pack(hits):
         seen, out = set(), []
         for h in hits:
@@ -128,27 +127,22 @@ def retrieve_node(state: AgentState) -> dict:
     quote_q = (f"{scope} {s.get('gfa_sqft', '')} sqft "
                f"{'separate entrance' if s.get('separate_entrance') else ''} "
                f"{s.get('kitchen', '')} {tier or ''}")
-    code_qs = ["minimum ceiling height basement rooms"]
-    if s.get("bedrooms_egress"):
-        code_qs.append("bedroom egress window requirements")
-    if accessory:
-        code_qs += ["fire separation between dwelling units",
-                    "smoke alarms carbon monoxide alarms secondary suite",
-                    "change of use second suite requirements"]
-    code_hits = [h for q in code_qs for h in r.search_building_code(q, k=3)]
+
+    # Code/zoning context comes from the shared regulatory service — the
+    # contractor-agnostic boundary a future MCP server exposes as-is.
+    reg = regulatory.applicable_codes(s)
 
     retrieved = {
         "past_project_quote": pack(r.search_past_quotes(quote_q, k=6,
                                                         package_tier=tier)),
-        "building_code": pack(code_hits),
+        "building_code": [{"citation": x["citation"], "text": x["text"]}
+                          for x in reg["building_code"]],
         "builder_guideline": pack(r.search_guidelines(
             f"allowances rules of thumb {tier or ''} {scope}", k=4)),
     }
-    if accessory:
-        retrieved["zoning_bylaw"] = pack(
-            r.search_zoning("additional residential unit basement apartment "
-                            "requirements parking", k=3,
-                            jurisdiction=settings.zoning_jurisdiction))
+    if "zoning_bylaw" in reg:
+        retrieved["zoning_bylaw"] = [{"citation": x["citation"], "text": x["text"]}
+                                     for x in reg["zoning_bylaw"]]
     return {"retrieved": retrieved}
 
 
