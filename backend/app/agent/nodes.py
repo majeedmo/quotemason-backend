@@ -272,7 +272,8 @@ def takeoff_node(state: AgentState) -> dict:
                f"{'separate entrance' if s.get('separate_entrance') else ''} "
                f"{s.get('kitchen', '')} {tier or ''}")
     comparables = _pack(get_retriever().search_past_quotes(
-        quote_q, k=6, package_tier=tier))
+        quote_q, k=6, package_tier=tier,
+        exclude_project_codes=state.get("_eval_exclude_project_codes")))
     item_keys = sorted(f"{c}/{i}" for c, i in materials.load_price_sheet())
     trade_keys = sorted({trade for trade, _ in labor.load_labor_rates()})
     allowance_keys = sorted(f"{c}/{i}" for c, i in allowances.load_allowances())
