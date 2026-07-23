@@ -18,6 +18,15 @@ def test_conditions_drop_none_and_prefix_metadata():
     ]
 
 
+def test_conditions_list_value_uses_match_any():
+    """A list value means "any of these" — used for leave-one-out eval
+    retrieval (excluding a set of project codes), never a single value."""
+    conds = _conditions({"project_code": ["P19", "S01"]})
+    assert len(conds) == 1
+    assert conds[0].key == "metadata.project_code"
+    assert conds[0].match.any == ["P19", "S01"]
+
+
 def test_citation_building_code():
     c = RetrievedChunk(text="", score=1.0, metadata={
         "doc_type": "building_code", "section_number": "9.9.10.1",
@@ -98,3 +107,31 @@ def test_search_no_filters_passes_none():
     r = CorpusRetriever(client=fake, embeddings=_FakeEmbeddings())
     r.search("anything", k=2)
     assert fake.calls[0].query_filter is None
+
+
+def test_search_past_quotes_exclude_project_codes_reaches_filter():
+    """Leave-one-out for the quote-accuracy eval: excludes a project's own
+    historical quote (and its synthetic twin) so retrieval can't hand the
+    pipeline its own answer."""
+    fake = _FakeClient()
+    r = CorpusRetriever(client=fake, embeddings=_FakeEmbeddings())
+    r.search_past_quotes("finished basement", k=5,
+                        exclude_project_codes=["P19", "S01"])
+    must_not = {c.key: c for c in fake.calls[0].query_filter.must_not}
+    assert must_not["metadata.project_code"].match.any == ["P19", "S01"]
+
+
+def test_search_past_quotes_exclude_combines_with_synthetic_filter():
+    fake = _FakeClient()
+    r = CorpusRetriever(client=fake, embeddings=_FakeEmbeddings())
+    r.search_past_quotes("basement", k=5, include_synthetic=False,
+                        exclude_project_codes=["P19"])
+    must_not_keys = {c.key for c in fake.calls[0].query_filter.must_not}
+    assert must_not_keys == {"metadata.synthetic", "metadata.project_code"}
+
+
+def test_search_past_quotes_no_exclusion_by_default():
+    fake = _FakeClient()
+    r = CorpusRetriever(client=fake, embeddings=_FakeEmbeddings())
+    r.search_past_quotes("basement", k=5)
+    assert fake.calls[0].query_filter.must_not == []

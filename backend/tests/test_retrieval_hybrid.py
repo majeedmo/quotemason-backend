@@ -70,6 +70,15 @@ def test_match_meta_mirrors_qdrant_filter_semantics():
     assert _match_meta({"synthetic": False}, None, {"synthetic": True})
 
 
+def test_match_meta_list_value_is_membership_not_equality():
+    """A list value means "any of these" -- used for leave-one-out eval
+    retrieval (excluding a set of project codes)."""
+    p19 = {"project_code": "P19"}
+    other = {"project_code": "P07"}
+    assert not _match_meta(p19, None, {"project_code": ["P19", "S01"]})
+    assert _match_meta(other, None, {"project_code": ["P19", "S01"]})
+
+
 def test_bm25_matches_exact_clause_number_dense_would_blur():
     target = _chunk(
         "[OBC 9.41 — Additional Requirements for Change of Use] second suite conversion",
@@ -103,7 +112,36 @@ def test_bm25_honours_synthetic_exclusion():
     codes = [h.metadata["project_code"]
              for h in r.search_past_quotes("sauna wine cellar", k=5, include_synthetic=False)]
     assert "S01" not in codes
-    assert "P19" in codes
+
+
+def test_bm25_honours_exclude_project_codes():
+    """Leave-one-out for the quote-accuracy eval — excludes a project's own
+    historical quote (and its synthetic twin) from BM25 hits too, not just
+    the dense side."""
+    extra = [
+        _chunk("[Past project P19] finished basement superior tier",
+               doc_type="past_project_quote", project_code="P19", synthetic=False,
+               contractor_id="company-a"),
+        _chunk("[Past project S01 (SYNTHETIC)] finished basement essential tier",
+               doc_type="past_project_quote", project_code="S01", synthetic=True,
+               contractor_id="company-a"),
+        _chunk("[Past project P07] finished basement unrelated",
+               doc_type="past_project_quote", project_code="P07", synthetic=False,
+               contractor_id="company-a"),
+    ]
+    r = _hybrid(extra)
+    codes = [h.metadata["project_code"] for h in r.search_past_quotes(
+        "finished basement", k=5, exclude_project_codes=["P19", "S01"])]
+    assert "P19" not in codes and "S01" not in codes
+    assert "P07" in codes
+
+
+def test_helpers_pass_exclude_project_codes_to_dense():
+    dense = _FakeDense(hits=[])
+    r = HybridRetriever(dense=dense, chunks=_FILLER)
+    r.search_past_quotes("basement", k=3, exclude_project_codes=["P19", "S01"])
+    call = dense.calls[-1]
+    assert call.must_not == {"project_code": ["P19", "S01"]}
 
 
 def test_rrf_rewards_a_chunk_found_by_both_retrievers():
