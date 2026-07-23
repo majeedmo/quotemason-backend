@@ -81,6 +81,30 @@ npm run dev                        # with the backend API running
 
 Three responsive routes (phone + laptop requirement): `/` fictional-contractor landing page → `/estimate` customer intake chat (per-tab thread resumes its Upstash checkpoint) → `/estimator` QuoteMason review console (queue, edit, request-changes revision, approve with copy/mailto stand-in send). Details: the frontend repo's README.
 
+## Corpus ownership model (capstone)
+
+The collection is one Qdrant index, but the data has two owners:
+
+- **Shared regulatory** (`corpus/OBC/`, `corpus/cambridge-zoning-bylaw/`) — public
+  data any contractor reuses. Chunks carry **no** `contractor_id`; the agent
+  reaches them only through the regulatory service (`backend/app/tools/regulatory.py`),
+  which is MCP-shaped (stateless, JSON in/out) so it can later ship as an MCP
+  server without code changes.
+- **Contractor-owned** (`corpus/quotes-*`, `corpus/guidelines/`,
+  `corpus/contractors/<id>/`) — stamped with `contractor_id`/`contractor_name`
+  at ingestion and filtered at query time. The deployment's contractor comes
+  from config (`CONTRACTOR_ID`, `CONTRACTOR_NAME`, `BRAND_NAME`,
+  `ZONING_JURISDICTION`); onboarding another contractor is config + their data
+  ingested under their id — no code changes. The owner-updatable material
+  price sheet lives at `corpus/contractors/company-a/material-prices.csv` and
+  is tool-read (staleness-gated), never ingested as RAG.
+
+**Deploy ordering note:** after pulling these changes, re-run ingestion against
+Qdrant Cloud **before** deploying the backend — the retriever now filters on
+`metadata.contractor_id`, which errors on Qdrant strict mode until the ingest
+creates the payload index and refreshes payloads (`uv run python -m
+app.ingestion.ingest`; chunk IDs are unchanged so it upserts in place).
+
 ## Data-handling policies
 
 - Client PII is redacted before any processing (`scripts/redact_quotes.py`); house numbers are anonymized, street + city kept for zoning context.
