@@ -317,7 +317,8 @@ def price_fill_node(state: AgentState) -> dict:
     auditable."""
     takeoff = state.get("takeoff") or {}
     lines = takeoff.get("lines") or []
-    gfa_band = labor.job_size_band(takeoff.get("gfa_sqft"))
+    gfa_sqft = takeoff.get("gfa_sqft")
+    gfa_band = labor.job_size_band(gfa_sqft)
     rows: list[dict] = []
     tavily_client = None
     tavily_used = 0
@@ -360,11 +361,14 @@ def price_fill_node(state: AgentState) -> dict:
             priced_anything = True
             sheet_row = materials.lookup(cat, item)
             if sheet_row and not materials.is_stale(sheet_row):
+                quoted = materials.quoted_price(sheet_row)
                 rows.append({**base, "item": item,
                             "unit_price_low_cad": sheet_row.price_low_cad,
                             "unit_price_high_cad": sheet_row.price_high_cad,
+                            "unit_price_quoted_cad": quoted,
                             "extended_low_cad": round(qty * sheet_row.price_low_cad, 2),
                             "extended_high_cad": round(qty * sheet_row.price_high_cad, 2),
+                            "extended_quoted_cad": round(qty * quoted, 2),
                             "sheet_unit": sheet_row.unit,
                             "price_source": "price_sheet",
                             "source_detail": (f"{sheet_row.source} (updated "
@@ -386,12 +390,16 @@ def price_fill_node(state: AgentState) -> dict:
                                      + " — estimator to price")})
             else:
                 is_lump = labor_row.unit in _LABOR_LUMP_UNITS
+                quoted = labor.quoted_rate(labor_row, gfa_sqft)
                 ext_low = labor_row.rate_low_cad if is_lump else round(qty * labor_row.rate_low_cad, 2)
                 ext_high = labor_row.rate_high_cad if is_lump else round(qty * labor_row.rate_high_cad, 2)
+                ext_quoted = quoted if is_lump else round(qty * quoted, 2)
                 rows.append({**base, "trade": trade,
                             "unit_price_low_cad": labor_row.rate_low_cad,
                             "unit_price_high_cad": labor_row.rate_high_cad,
+                            "unit_price_quoted_cad": round(quoted, 2),
                             "extended_low_cad": ext_low, "extended_high_cad": ext_high,
+                            "extended_quoted_cad": round(ext_quoted, 2),
                             "sheet_unit": labor_row.unit,
                             "price_source": "labor_rate",
                             "source_detail": f"{labor_row.includes} ({labor_row.job_size_band})",

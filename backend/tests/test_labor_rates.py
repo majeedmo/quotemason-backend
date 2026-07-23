@@ -3,7 +3,8 @@
 import pytest
 
 from app.pricing import labor
-from app.pricing.labor import job_size_band, load_labor_rates, lookup
+from app.pricing.labor import (LaborRow, job_size_band, load_labor_rates,
+                               lookup, quoted_rate, size_fraction)
 
 _HEADER = "trade,job_size_band,unit,rate_low_cad,rate_high_cad,includes,status,notes\n"
 
@@ -80,6 +81,55 @@ def test_repo_sheet_loads_and_status_values_are_known():
         assert not labor.is_site_dependent(normal)
     finally:
         labor._sheet.cache_clear()
+
+
+# --- point-estimate policy: collapsing (low, high) to a single quoted number -
+
+def _row(**overrides):
+    defaults = dict(trade="framing", job_size_band="small_lt_500sqft",
+                    unit="per_sqft_floor", rate_low_cad=4.0, rate_high_cad=6.0,
+                    includes="x", status="VERIFIED", notes="")
+    return LaborRow(**{**defaults, **overrides})
+
+
+def test_size_fraction_within_band_clamped_and_none_cases():
+    assert size_fraction(None, "small_lt_500sqft") is None
+    assert size_fraction(400, "any") is None
+    assert size_fraction(0, "small_lt_500sqft") == 0.0
+    assert size_fraction(500, "small_lt_500sqft") == 1.0
+    assert size_fraction(250, "small_lt_500sqft") == 0.5
+    assert size_fraction(1500, "large_1000_2000sqft") == 0.5
+    assert size_fraction(5000, "large_1000_2000sqft") == 1.0  # clamped, not >1
+
+
+def test_quoted_rate_lump_sum_scales_toward_high_near_band_top():
+    row = _row(unit="lump_sum", rate_low_cad=6000, rate_high_cad=10000)
+    assert quoted_rate(row, 0) == 6000     # band bottom edge -> low
+    assert quoted_rate(row, 500) == 10000  # band top edge -> high
+    assert quoted_rate(row, 250) == 8000   # band midpoint -> rate midpoint
+
+
+def test_quoted_rate_per_unit_scales_toward_low_near_band_top_reversed():
+    row = _row(unit="per_sqft_floor", rate_low_cad=4.50, rate_high_cad=6.50)
+    assert quoted_rate(row, 0) == 6.50    # band bottom edge -> HIGH (reversed)
+    assert quoted_rate(row, 500) == 4.50  # band top edge -> LOW (reversed)
+    assert quoted_rate(row, 250) == 5.50  # band midpoint -> rate midpoint
+
+
+def test_quoted_rate_any_band_is_always_midpoint_regardless_of_gfa():
+    row = _row(job_size_band="any", unit="per_opening",
+              rate_low_cad=1800, rate_high_cad=3200)
+    assert quoted_rate(row, 50) == 2500
+    assert quoted_rate(row, 1999) == 2500
+    assert quoted_rate(row, None) == 2500
+
+
+def test_quoted_rate_site_dependent_always_midpoint_even_near_band_edges():
+    row = _row(unit="lump_sum", rate_low_cad=8000, rate_high_cad=15000,
+              status="VERIFIED_SITE_DEPENDENT")
+    # would otherwise scale toward the high end near the band top — must not
+    assert quoted_rate(row, 490) == 11500
+    assert quoted_rate(row, 10) == 11500
 
 
 @pytest.fixture(autouse=True)

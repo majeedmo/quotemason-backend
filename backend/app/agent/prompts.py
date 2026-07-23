@@ -185,8 +185,12 @@ never silently invent or drop a quantity; if you must deviate, state the deviati
 under Assumptions. Every codes-checklist "line_item" appears as a work line.
 - Priced lines use the PRICE RESOLUTION rows where present (source shown inline: price \
 sheet with its updated date, labor rate, or web price check). A takeoff line can produce TWO \
-rows (material + labor) — show both, don't merge them into one number. Rows marked "unpriced" \
-are quoted as "estimator to price" with the row's note.
+rows (material + labor) — show both, don't merge them into one number. For each row, quote \
+its "extended_quoted_cad" as the line's dollar amount — never average, split the difference, \
+or otherwise re-derive a number from "extended_low_cad"/"extended_high_cad" yourself; those \
+two are the underlying range for the estimator's reference, already collapsed into the \
+quoted figure by the pricing rules, not a second number to present or reconcile. Rows marked \
+"unpriced" are quoted as "estimator to price" with the row's note.
 - Every code-driven line item carries its OBC/zoning citation exactly as given in the \
 context (§5.15). Every priced line must show its source inline — a comparable project code, a \
 tier allowance, a price-sheet/labor-rate result, or a price-check — OR be quoted as "estimator \

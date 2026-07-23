@@ -4,6 +4,7 @@ source of truth for triggers, so these tests exercise the real doc."""
 import json
 from types import SimpleNamespace
 
+import pytest
 from langchain_core.messages import HumanMessage
 
 import app.agent.nodes as nodes
@@ -245,8 +246,8 @@ def test_takeoff_node_degrades_to_none_on_unparseable_output(monkeypatch):
     assert out["takeoff"] is None
 
 
-def _takeoff_state(*lines):
-    return {"takeoff": {"lines": list(lines)}}
+def _takeoff_state(*lines, gfa_sqft=None):
+    return {"takeoff": {"lines": list(lines), "gfa_sqft": gfa_sqft}}
 
 
 def test_price_fill_prices_fresh_sheet_rows_with_arithmetic(monkeypatch):
@@ -258,6 +259,10 @@ def test_price_fill_prices_fresh_sheet_rows_with_arithmetic(monkeypatch):
     assert row["price_source"] == "price_sheet"
     assert row["extended_low_cad"] == round(100 * row["unit_price_low_cad"], 2)
     assert not row["stale"] and "updated" in row["source_detail"]
+    # material prices have no size axis — quoted is always the midpoint
+    assert row["unit_price_quoted_cad"] == pytest.approx(
+        (row["unit_price_low_cad"] + row["unit_price_high_cad"]) / 2)
+    assert row["extended_quoted_cad"] == round(100 * row["unit_price_quoted_cad"], 2)
 
 
 def test_price_fill_unpriced_note_when_missing_and_no_key(monkeypatch):
@@ -321,6 +326,36 @@ def test_price_fill_labor_quantity_based_multiplies_by_qty(monkeypatch):
     assert row["extended_low_cad"] == 450.0 and row["extended_high_cad"] == 650.0
     assert row["takeoff_line_ref"] == "t1"
     assert not row["rate_unverified"] and not row["site_dependent"]
+    # no gfa_sqft in this takeoff -> no size axis -> quoted defaults to midpoint
+    assert row["unit_price_quoted_cad"] == 5.50
+    assert row["extended_quoted_cad"] == 550.0
+
+
+def test_price_fill_labor_quoted_interpolates_within_band_by_gfa(monkeypatch):
+    """End-to-end through the node: a per-unit rate reverses (near the
+    band's top edge -> low rate), a lump-sum rate scales up (near the top
+    edge -> high total) — both driven by the real takeoff gfa_sqft."""
+    monkeypatch.setattr(nodes.settings, "tavily_api_key", "")
+
+    def fake_lookup(trade, band):
+        if trade == "framing":
+            return _labor_row(unit="per_sqft_floor", rate_low_cad=4.50,
+                              rate_high_cad=6.50, job_size_band=band)
+        return _labor_row(trade="electrical_rough_and_finish", unit="lump_sum",
+                          rate_low_cad=6000, rate_high_cad=10000, job_size_band=band)
+    monkeypatch.setattr(nodes.labor, "lookup", fake_lookup)
+
+    out = price_fill_node(_takeoff_state(
+        {"id": "t1", "category": "framing", "trade": "framing",
+         "quantity": 10, "unit": "linear_ft"},
+        {"id": "t2", "category": "electrical", "trade": "electrical_rough_and_finish",
+         "quantity": 1, "unit": "lump_sum"},
+        gfa_sqft=490))  # near the top edge of the small_lt_500sqft band
+    by_ref = {r["takeoff_line_ref"]: r for r in out["price_resolution"]}
+    # per-unit: near the band's top -> reversed toward the LOW end
+    assert by_ref["t1"]["unit_price_quoted_cad"] < 5.50
+    # lump-sum: near the band's top -> scaled toward the HIGH end
+    assert by_ref["t2"]["extended_quoted_cad"] > 8000
 
 
 def test_price_fill_labor_lump_sum_ignores_quantity(monkeypatch):
@@ -353,9 +388,11 @@ def test_price_fill_labor_site_dependent_flag_propagates(monkeypatch):
         rate_low_cad=8000, rate_high_cad=15000, status="VERIFIED_SITE_DEPENDENT"))
     out = price_fill_node(_takeoff_state(
         {"id": "t1", "category": "excavation", "trade": "excavation_below_grade_entrance",
-         "quantity": 1, "unit": "lump_sum"}))
+         "quantity": 1, "unit": "lump_sum"}, gfa_sqft=490))  # near band top -- must not matter
     row = out["price_resolution"][0]
     assert row["site_dependent"] is True and not row["rate_unverified"]
+    # site-dependent rows always quote the midpoint, regardless of gfa position
+    assert row["extended_quoted_cad"] == 11500
 
 
 def test_price_fill_labor_placeholder_status_marks_rate_unverified(monkeypatch):

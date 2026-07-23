@@ -86,3 +86,10 @@ def is_stale(row: PriceRow, threshold_days: int | None = None,
     node falls back (web check when available, else 'estimator to price')."""
     limit = settings.price_staleness_days if threshold_days is None else threshold_days
     return ((today or date.today()) - row.updated_at) > timedelta(days=limit)
+
+
+def quoted_price(row: PriceRow) -> float:
+    """Collapse (price_low_cad, price_high_cad) to the single number the
+    draft quotes. Material prices carry no job-size axis (unlike labor
+    rates) — always the midpoint."""
+    return (row.price_low_cad + row.price_high_cad) / 2.0

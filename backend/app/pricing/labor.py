@@ -112,3 +112,54 @@ def is_rate_unverified(row: LaborRow) -> bool:
 
 def is_site_dependent(row: LaborRow) -> bool:
     return row.status == "VERIFIED_SITE_DEPENDENT"
+
+
+# Same three bands job_size_band() assigns projects to — used here to place a
+# project's GFA *within* its band, not to pick the band itself.
+_BAND_BOUNDS = {
+    "small_lt_500sqft": (0.0, 500.0),
+    "medium_500_1000sqft": (500.0, 1000.0),
+    "large_1000_2000sqft": (1000.0, 2000.0),
+}
+
+
+def size_fraction(gfa_sqft: float | None, band: str) -> float | None:
+    """Where gfa_sqft sits within `band`'s own bounds, as a 0-1 fraction
+    (clamped — a >2000 sqft project capped into the "large" band reads as
+    1.0, not an out-of-range value). None when there's no size axis to
+    place it on: gfa unknown, or `band` is "any"."""
+    if gfa_sqft is None:
+        return None
+    bounds = _BAND_BOUNDS.get(band)
+    if bounds is None:
+        return None
+    low, high = bounds
+    return max(0.0, min(1.0, (gfa_sqft - low) / (high - low)))
+
+
+def quoted_rate(row: LaborRow, gfa_sqft: float | None) -> float:
+    """Collapse (rate_low_cad, rate_high_cad) to the single number the draft
+    quotes. Policy:
+    - site-dependent rows: always the midpoint — conditions (soil/depth/
+      access) matter more than project size, and the number is a
+      placeholder pending a site visit either way.
+    - lump_sum rows (banded): scale UP toward the high end as the project
+      approaches the band's top edge — a bigger job within the band is
+      proportionally more work, priced accordingly.
+    - per-unit rows (per_sqft_*, banded): scale DOWN toward the low end as
+      the project approaches the band's top edge — economies of scale;
+      fixed setup/mobilization cost spreads over more units.
+    - "any"-banded rows, or gfa unknown: no size axis to interpolate
+      against — midpoint.
+    """
+    if is_site_dependent(row):
+        frac = 0.5
+    else:
+        size_frac = size_fraction(gfa_sqft, row.job_size_band)
+        if size_frac is None:
+            frac = 0.5
+        elif row.unit == "lump_sum":
+            frac = size_frac
+        else:
+            frac = 1.0 - size_frac
+    return row.rate_low_cad + frac * (row.rate_high_cad - row.rate_low_cad)
