@@ -21,6 +21,7 @@ from pydantic import BaseModel
 
 
 class CodeItem(BaseModel):
+    id: str = ""                         # assigned in code after validation, never by the model
     requirement: str                     # what must be done or verified
     citation: str                        # verbatim citation string from a retrieved row
     doc_type: Literal["building_code", "zoning_bylaw"]
@@ -36,14 +37,17 @@ class CodesChecklist(BaseModel):
 
 
 class TakeoffLine(BaseModel):
+    id: str = ""                         # assigned in code after validation
     category: str                        # work-category / price-sheet vocabulary
-    item: str                            # price-sheet/allowances key where possible ("lvp")
+    item: str = ""                       # price-sheet/allowances key where possible ("lvp")
+    trade: str = ""                      # labor-rates.csv trade key, parallel to item
     description: str = ""
     quantity: float
     unit: str                            # sqft | linear_ft | each | sheet | gallon | lump_sum
     basis: str = ""                      # auditable: "§4 drywall formula on GFA 900"
     source: Literal["guideline_s4", "comparable", "code_item", "assumption"] = "assumption"
     comparable_ref: str = ""             # project code when source == "comparable"
+    code_item_ref: str = ""              # CodeItem.id when source == "code_item"
 
 
 class Takeoff(BaseModel):

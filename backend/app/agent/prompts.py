@@ -120,13 +120,15 @@ Respond with a single JSON object and NOTHING else — no prose, no code fences:
   "gfa_sqft": <number|null>,
   "lines": [{{
     "category": "<work category, price-sheet vocabulary where possible>",
-    "item": "<price-sheet/allowances key where possible, e.g. "lvp">",
+    "item": "<price-sheet/allowances key where possible, e.g. "lvp", else empty>",
+    "trade": "<labor-rate key where the work needs installed labor, e.g. "framing", else empty>",
     "description": "<short human description>",
     "quantity": <number>,
     "unit": "sqft" | "linear_ft" | "each" | "sheet" | "gallon" | "lump_sum",
     "basis": "<auditable derivation, e.g. §4 drywall formula on GFA 900>",
     "source": "guideline_s4" | "comparable" | "code_item" | "assumption",
-    "comparable_ref": "<project code when source is comparable, else empty>"
+    "comparable_ref": "<project code when source is comparable, else empty>",
+    "code_item_ref": "<the codes-checklist item id this line satisfies, else empty>"
   }}],
   "assumptions": ["<each unknown slot or guessed dimension, stated>"]
 }}
@@ -135,10 +137,16 @@ Rules:
 - Apply the §4 formulas and waste factors EXACTLY as written; show the arithmetic in \
 "basis". Never invent a formula — if §4 has no rule and no comparable grounds it, mark \
 source "assumption" and state it in "assumptions".
-- Every codes-checklist item with action "line_item" MUST appear as a takeoff line \
-(source "code_item").
-- Use the KNOWN PRICE/ALLOWANCE ITEM KEYS for "category"/"item" whenever one fits — \
+- Every codes-checklist item with "action": "line_item" MUST appear as a takeoff line \
+(source "code_item", "code_item_ref" set to that item's "id" — copy it exactly, never invent one).
+- A line may set "item" (a material), "trade" (installed labor), both, or neither — set \
+whichever actually applies; many lines need both (e.g. LVP flooring has a material cost \
+AND an install-labor cost, priced separately downstream).
+- Use the KNOWN PRICE/ALLOWANCE ITEM KEYS and KNOWN LABOR TRADE KEYS whenever one fits — \
 exact spelling; a mismatched key cannot be priced downstream.
+- Never invent a "bathroom_build" lump-sum labor line AND itemize that same bathroom's \
+electrical/plumbing/tiling/drywall trade lines — pick one representation, not both, or the \
+cost double-counts.
 - Quantities are for the whole project as scoped; unknowns come from comparables of \
 similar GFA (name the project code in "comparable_ref")."""
 
@@ -148,12 +156,15 @@ def takeoff_system() -> str:
 
 
 def takeoff_user(slots: dict, section_4: str, comparables: list, codes_checklist: dict,
-                 item_keys: list[str], feedback: str | None = None) -> str:
+                 item_keys: list[str], trade_keys: list[str],
+                 feedback: str | None = None) -> str:
     comp = "\n\n".join(f"--- {c['citation']}\n{c['text']}" for c in comparables)
     parts = [f"INTAKE SLOTS:\n{json.dumps(slots, indent=2)}",
              f"=== GUIDELINE §4 — MATERIAL CALCULATION RULES OF THUMB ===\n{section_4}",
-             f"APPLICABLE CODES CHECKLIST (stage 1):\n{json.dumps(codes_checklist, indent=2)}",
+             f"APPLICABLE CODES CHECKLIST (stage 1 — items have \"id\"s to reference):\n"
+             f"{json.dumps(codes_checklist, indent=2)}",
              f"KNOWN PRICE/ALLOWANCE ITEM KEYS (category/item):\n{', '.join(item_keys)}",
+             f"KNOWN LABOR TRADE KEYS (trade):\n{', '.join(trade_keys)}",
              f"COMPARABLE PAST PROJECTS:\n{comp or '(none retrieved)'}"]
     if feedback:
         parts.append("ESTIMATOR REVISION REQUEST (apply scope/quantity changes):\n"
@@ -173,18 +184,22 @@ never fabricate one.
 never silently invent or drop a quantity; if you must deviate, state the deviation and why \
 under Assumptions. Every codes-checklist "line_item" appears as a work line.
 - Priced lines use the PRICE RESOLUTION rows where present (source shown inline: price \
-sheet with its updated date, or web price check). Rows marked "unpriced" are quoted as \
-"estimator to price" with the row's note.
+sheet with its updated date, labor rate, or web price check). A takeoff line can produce TWO \
+rows (material + labor) — show both, don't merge them into one number. Rows marked "unpriced" \
+are quoted as "estimator to price" with the row's note.
 - Every code-driven line item carries its OBC/zoning citation exactly as given in the \
 context (§5.15). Every priced line must show its source inline — a comparable project code, a \
-tier allowance, or a price-sheet/price-check result — OR be quoted as "estimator to price — no \
-comparable on file" (§5.19). Bundled trade lines (electrical, plumbing, HVAC, project management) are the \
-usual offenders: price them from their [PLACEHOLDER] labour rate (cite the CSV, mark "rate \
-unverified") rather than emitting a bare number — reserve "estimator to price" for lines no \
-rate, allowance, comparable, or price check can ground. Contract-policy amounts — deposit, \
+tier allowance, a price-sheet/labor-rate result, or a price-check — OR be quoted as "estimator \
+to price — no comparable on file" (§5.19). Bundled trade lines (electrical, plumbing, HVAC, \
+project management) are the usual offenders: price them from their labor-rate row (cite the \
+CSV) rather than emitting a bare number — reserve "estimator to price" for lines no rate, \
+allowance, comparable, or price check can ground. Contract-policy amounts — deposit, \
 milestone balances, portable toilet, change-order admin fees — cite their §5 rule; this applies \
 to the allowances table, milestone schedule, and totals too, not just line items.
-- Any amount derived from a [PLACEHOLDER] rate must be marked "rate unverified".
+- Any price_resolution row with "rate_unverified": true must be marked "rate unverified" \
+(the owner hasn't confirmed that rate yet). Any row with "site_dependent": true is quoted as a \
+range with "confirm on-site before finalizing" — that rate is confirmed but conditions \
+(soil, depth, access) can move the real cost; this is a different caveat from "unverified".
 - Every slot valued "unknown" appears under Assumptions (§5.11).
 - If flags are present, the draft OPENS with a "⚠ ESTIMATOR REVIEW REQUIRED" block listing \
 each flag_text verbatim, before any pricing content.
@@ -216,7 +231,8 @@ def draft_user(slots: dict, flags: list, retrieved: dict, codes_checklist: dict 
             f"{json.dumps(codes_checklist, indent=2)}\n\n"
             f"MATERIAL TAKEOFF (stage 2 — quantity source of truth):\n"
             f"{json.dumps(takeoff, indent=2)}\n\n"
-            f"PRICE RESOLUTION (contractor price sheet; web fallback for "
-            f"missing/stale items):\n{json.dumps(price_resolution, indent=2)}\n\n"
+            f"PRICE RESOLUTION (contractor price sheet + labor rates; web "
+            f"fallback for missing/stale items):\n"
+            f"{json.dumps(price_resolution, indent=2)}\n\n"
             f"RETRIEVED CONTEXT ({sum(len(v) for v in retrieved.values())} chunks):\n"
             + "\n\n".join(ctx))

@@ -16,7 +16,7 @@ from app.agent import guidelines, prompts, schemas
 from app.agent.llm import codes_model, drafting_model, intake_model
 from app.agent.state import AgentState
 from app.config import settings
-from app.pricing import materials
+from app.pricing import labor, materials
 from app.retrieval import get_retriever
 from app.tools import regulatory
 
@@ -217,6 +217,8 @@ def codes_node(state: AgentState) -> dict:
         logger.exception("codes stage failed — using deterministic checklist")
     if checklist is None:
         checklist = _checklist_from_seeds(seeds)
+    for i, item in enumerate(checklist.items, start=1):
+        item.id = f"c{i}"  # assigned in code, never by the model — no drift/collision
 
     def rows_for(dt: str) -> list[dict]:
         rows = list(seeds.get(dt, [])) + [r for r in tool_rows
@@ -237,6 +239,28 @@ def codes_node(state: AgentState) -> dict:
     return {"codes_checklist": checklist.model_dump(), "retrieved": retrieved}
 
 
+def _enforce_code_coverage(takeoff: schemas.Takeoff,
+                           checklist: schemas.CodesChecklist) -> None:
+    """Every mandatory ("line_item") code requirement must have a traceable
+    takeoff line. The takeoff prompt instructs this but doesn't enforce it —
+    a dropped requirement would otherwise vanish from the draft silently.
+    Mutates takeoff.lines in place, injecting an unpriced placeholder line
+    for anything missing (never drops it, mirrors price_fill's philosophy)."""
+    mandatory = {i.id for i in checklist.items if i.action == "line_item"}
+    covered = {ln.code_item_ref for ln in takeoff.lines if ln.code_item_ref}
+    by_id = {i.id: i for i in checklist.items}
+    next_idx = len(takeoff.lines) + 1
+    for missing_id in sorted(mandatory - covered):
+        item = by_id[missing_id]
+        takeoff.lines.append(schemas.TakeoffLine(
+            id=f"t{next_idx}", category="code_required", quantity=0,
+            unit="lump_sum", description=item.requirement,
+            basis=f"mandatory per codes checklist ({item.citation}) — "
+                  "takeoff stage did not quantify this",
+            source="code_item", code_item_ref=missing_id))
+        next_idx += 1
+
+
 def takeoff_node(state: AgentState) -> dict:
     """Stage 2: structured material-quantity takeoff from §4 rules of thumb,
     the codes checklist, and comparable past projects. Degrades to None —
@@ -250,12 +274,14 @@ def takeoff_node(state: AgentState) -> dict:
     comparables = _pack(get_retriever().search_past_quotes(
         quote_q, k=6, package_tier=tier))
     item_keys = sorted(f"{c}/{i}" for c, i in materials.load_price_sheet())
+    trade_keys = sorted({trade for trade, _ in labor.load_labor_rates()})
+    checklist_dict = state.get("codes_checklist") or {}
     takeoff = None
     try:
         msgs = [SystemMessage(prompts.takeoff_system()),
                 HumanMessage(prompts.takeoff_user(
                     s, guidelines.section("4"), comparables,
-                    state.get("codes_checklist") or {}, item_keys,
+                    checklist_dict, item_keys, trade_keys,
                     state.get("estimator_feedback")))]
         m = drafting_model()
         resp = m.invoke(msgs)
@@ -265,64 +291,117 @@ def takeoff_node(state: AgentState) -> dict:
             takeoff = _validated(schemas.Takeoff, retry.content, "lines")
     except Exception:
         logger.exception("takeoff stage failed — drafting from raw context")
+    if takeoff is not None:
+        for i, line in enumerate(takeoff.lines, start=1):
+            line.id = f"t{i}"  # assigned in code, never by the model
+        if checklist_dict.get("items"):
+            _enforce_code_coverage(takeoff,
+                                   schemas.CodesChecklist.model_validate(checklist_dict))
     return {"takeoff": takeoff.model_dump() if takeoff else None,
             "retrieved": {**state.get("retrieved", {}),
                           "past_project_quote": comparables}}
 
 
+_LABOR_LUMP_UNITS = {"lump_sum"}
+
+
 def price_fill_node(state: AgentState) -> dict:
-    """Deterministic price resolution — no LLM. Sheet-first (staleness-gated),
-    per-item web fallback when a Tavily key is present, honest 'unpriced'
-    rows otherwise. Arithmetic happens here in code so the accuracy eval can
-    assert it."""
-    lines = (state.get("takeoff") or {}).get("lines") or []
+    """Deterministic price resolution — no LLM. Sheet-first (staleness-gated
+    for materials, status-gated for labor), per-item web fallback when a
+    Tavily key is present, honest 'unpriced' rows otherwise. Arithmetic
+    happens here in code so the accuracy eval can assert it.
+
+    A takeoff line can price against a material AND a labor rate — those
+    become two separate price_resolution rows sharing takeoff_line_ref,
+    never a blended number, so each dollar's source stays independently
+    auditable."""
+    takeoff = state.get("takeoff") or {}
+    lines = takeoff.get("lines") or []
+    gfa_band = labor.job_size_band(takeoff.get("gfa_sqft"))
     rows: list[dict] = []
     tavily_client = None
     tavily_used = 0
-    for line in lines:
-        cat, item = str(line.get("category", "")), str(line.get("item", ""))
-        qty = float(line.get("quantity") or 0)
-        base = {"category": cat, "item": item,
-                "description": line.get("description", ""),
-                "quantity": qty, "unit": line.get("unit", "")}
-        sheet_row = materials.lookup(cat, item) if cat and item else None
-        if sheet_row and not materials.is_stale(sheet_row):
-            rows.append({**base,
-                         "unit_price_low_cad": sheet_row.price_low_cad,
-                         "unit_price_high_cad": sheet_row.price_high_cad,
-                         "extended_low_cad": round(qty * sheet_row.price_low_cad, 2),
-                         "extended_high_cad": round(qty * sheet_row.price_high_cad, 2),
-                         "sheet_unit": sheet_row.unit,
-                         "price_source": "price_sheet",
-                         "source_detail": (f"{sheet_row.source} (updated "
-                                           f"{sheet_row.updated_at.isoformat()})"),
-                         "stale": False})
-            continue
-        status = "stale" if sheet_row else "missing"
+
+    def _tavily_fallback(base: dict, desc: str, status: str) -> dict:
+        nonlocal tavily_client, tavily_used
         if settings.tavily_api_key and tavily_used < 3:
             try:
                 if tavily_client is None:
                     from tavily import TavilyClient
                     tavily_client = TavilyClient(api_key=settings.tavily_api_key)
-                q = f"{line.get('description') or item} price Ontario"
+                q = f"{desc} price Ontario"
                 resp = tavily_client.search(q, max_results=3, include_answer=True)
                 tavily_used += 1
-                rows.append({**base, "price_source": "tavily",
-                             "sheet_status": status, "query": q,
-                             "answer": resp.get("answer"),
-                             "results": [{"title": x["title"], "url": x["url"]}
-                                         for x in resp.get("results", [])]})
+                return {**base, "price_source": "tavily", "sheet_status": status,
+                       "query": q, "answer": resp.get("answer"),
+                       "results": [{"title": x["title"], "url": x["url"]}
+                                   for x in resp.get("results", [])]}
             except Exception as e:
-                rows.append({**base, "price_source": "unpriced",
-                             "sheet_status": status,
-                             "note": f"web price check failed ({e}) — "
-                                     "estimator to price"})
-            continue
-        rows.append({**base, "price_source": "unpriced", "sheet_status": status,
-                     "note": (f"no fresh sheet price ({status})"
-                              + ("" if settings.tavily_api_key
-                                 else " and TAVILY_API_KEY not set")
-                              + " — estimator to price")})
+                return {**base, "price_source": "unpriced", "sheet_status": status,
+                       "note": f"web price check failed ({e}) — estimator to price"}
+        return {**base, "price_source": "unpriced", "sheet_status": status,
+               "note": (f"no fresh sheet price ({status})"
+                        + ("" if settings.tavily_api_key
+                           else " and TAVILY_API_KEY not set")
+                        + " — estimator to price")}
+
+    for line in lines:
+        cat = str(line.get("category", ""))
+        item = str(line.get("item", "") or "")
+        trade = str(line.get("trade", "") or "")
+        qty = float(line.get("quantity") or 0)
+        unit = line.get("unit", "")
+        desc = line.get("description", "")
+        base = {"category": cat, "description": desc, "quantity": qty,
+                "unit": unit, "takeoff_line_ref": line.get("id", "")}
+
+        priced_anything = False
+        if item:
+            priced_anything = True
+            sheet_row = materials.lookup(cat, item)
+            if sheet_row and not materials.is_stale(sheet_row):
+                rows.append({**base, "item": item,
+                            "unit_price_low_cad": sheet_row.price_low_cad,
+                            "unit_price_high_cad": sheet_row.price_high_cad,
+                            "extended_low_cad": round(qty * sheet_row.price_low_cad, 2),
+                            "extended_high_cad": round(qty * sheet_row.price_high_cad, 2),
+                            "sheet_unit": sheet_row.unit,
+                            "price_source": "price_sheet",
+                            "source_detail": (f"{sheet_row.source} (updated "
+                                              f"{sheet_row.updated_at.isoformat()})"),
+                            "stale": False})
+            else:
+                status = "stale" if sheet_row else "missing"
+                rows.append(_tavily_fallback({**base, "item": item}, desc or item, status))
+
+        if trade:
+            priced_anything = True
+            labor_row = labor.lookup(trade, gfa_band)
+            if labor_row is None:
+                rows.append({**base, "trade": trade, "price_source": "unpriced",
+                            "sheet_status": "missing",
+                            "note": (f"no labor rate found for trade '{trade}'"
+                                     + ("" if gfa_band else " (GFA unknown — cannot "
+                                        "determine job-size band)")
+                                     + " — estimator to price")})
+            else:
+                is_lump = labor_row.unit in _LABOR_LUMP_UNITS
+                ext_low = labor_row.rate_low_cad if is_lump else round(qty * labor_row.rate_low_cad, 2)
+                ext_high = labor_row.rate_high_cad if is_lump else round(qty * labor_row.rate_high_cad, 2)
+                rows.append({**base, "trade": trade,
+                            "unit_price_low_cad": labor_row.rate_low_cad,
+                            "unit_price_high_cad": labor_row.rate_high_cad,
+                            "extended_low_cad": ext_low, "extended_high_cad": ext_high,
+                            "sheet_unit": labor_row.unit,
+                            "price_source": "labor_rate",
+                            "source_detail": f"{labor_row.includes} ({labor_row.job_size_band})",
+                            "rate_unverified": labor.is_rate_unverified(labor_row),
+                            "site_dependent": labor.is_site_dependent(labor_row)})
+
+        if not priced_anything:
+            rows.append({**base, "price_source": "unpriced", "sheet_status": "missing",
+                        "note": "no material or labor key on this line — estimator to price"})
+
     return {"price_resolution": rows}
 
 

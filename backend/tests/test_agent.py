@@ -302,6 +302,144 @@ def test_price_fill_empty_takeoff_yields_no_rows(monkeypatch):
     assert price_fill_node({"takeoff": None}) == {"price_resolution": []}
 
 
+def _labor_row(**overrides):
+    from app.pricing.labor import LaborRow
+    defaults = dict(trade="framing", job_size_band="small_lt_500sqft",
+                    unit="per_sqft_floor", rate_low_cad=4.50, rate_high_cad=6.50,
+                    includes="studs", status="VERIFIED", notes="")
+    return LaborRow(**{**defaults, **overrides})
+
+
+def test_price_fill_labor_quantity_based_multiplies_by_qty(monkeypatch):
+    monkeypatch.setattr(nodes.settings, "tavily_api_key", "")
+    monkeypatch.setattr(nodes.labor, "lookup", lambda t, b: _labor_row())
+    out = price_fill_node(_takeoff_state(
+        {"id": "t1", "category": "framing", "trade": "framing",
+         "quantity": 100, "unit": "linear_ft"}))
+    row = out["price_resolution"][0]
+    assert row["price_source"] == "labor_rate"
+    assert row["extended_low_cad"] == 450.0 and row["extended_high_cad"] == 650.0
+    assert row["takeoff_line_ref"] == "t1"
+    assert not row["rate_unverified"] and not row["site_dependent"]
+
+
+def test_price_fill_labor_lump_sum_ignores_quantity(monkeypatch):
+    monkeypatch.setattr(nodes.settings, "tavily_api_key", "")
+    monkeypatch.setattr(nodes.labor, "lookup", lambda t, b: _labor_row(
+        trade="demolition_and_prep", unit="lump_sum",
+        rate_low_cad=1500, rate_high_cad=3500))
+    out = price_fill_node(_takeoff_state(
+        {"id": "t1", "category": "demolition", "trade": "demolition_and_prep",
+         "quantity": 900, "unit": "lump_sum"}))
+    row = out["price_resolution"][0]
+    # lump-sum bands are flat — the takeoff's arbitrary quantity must not scale it
+    assert row["extended_low_cad"] == 1500 and row["extended_high_cad"] == 3500
+
+
+def test_price_fill_labor_missing_trade_is_unpriced(monkeypatch):
+    monkeypatch.setattr(nodes.settings, "tavily_api_key", "")
+    monkeypatch.setattr(nodes.labor, "lookup", lambda t, b: None)
+    out = price_fill_node(_takeoff_state(
+        {"id": "t1", "category": "x", "trade": "no_such_trade",
+         "quantity": 1, "unit": "each"}))
+    row = out["price_resolution"][0]
+    assert row["price_source"] == "unpriced" and "no labor rate" in row["note"]
+
+
+def test_price_fill_labor_site_dependent_flag_propagates(monkeypatch):
+    monkeypatch.setattr(nodes.settings, "tavily_api_key", "")
+    monkeypatch.setattr(nodes.labor, "lookup", lambda t, b: _labor_row(
+        trade="excavation_below_grade_entrance", unit="lump_sum",
+        rate_low_cad=8000, rate_high_cad=15000, status="VERIFIED_SITE_DEPENDENT"))
+    out = price_fill_node(_takeoff_state(
+        {"id": "t1", "category": "excavation", "trade": "excavation_below_grade_entrance",
+         "quantity": 1, "unit": "lump_sum"}))
+    row = out["price_resolution"][0]
+    assert row["site_dependent"] is True and not row["rate_unverified"]
+
+
+def test_price_fill_labor_placeholder_status_marks_rate_unverified(monkeypatch):
+    monkeypatch.setattr(nodes.settings, "tavily_api_key", "")
+    monkeypatch.setattr(nodes.labor, "lookup", lambda t, b: _labor_row(
+        status="PLACEHOLDER_OWNER_VERIFY"))
+    out = price_fill_node(_takeoff_state(
+        {"id": "t1", "category": "framing", "trade": "framing",
+         "quantity": 10, "unit": "linear_ft"}))
+    assert out["price_resolution"][0]["rate_unverified"] is True
+
+
+def test_price_fill_material_and_labor_share_takeoff_line_ref(monkeypatch):
+    monkeypatch.setattr(nodes.settings, "tavily_api_key", "")
+    monkeypatch.setattr(nodes.labor, "lookup", lambda t, b: _labor_row(
+        trade="flooring_install_lvp", unit="per_sqft_floor",
+        rate_low_cad=2.0, rate_high_cad=3.5))
+    out = price_fill_node(_takeoff_state(
+        {"id": "t7", "category": "flooring", "item": "lvp",
+         "trade": "flooring_install_lvp", "quantity": 100, "unit": "sqft"}))
+    rows = out["price_resolution"]
+    assert len(rows) == 2  # material row + labor row, never blended
+    sources = {r["price_source"] for r in rows}
+    assert sources == {"price_sheet", "labor_rate"}
+    assert all(r["takeoff_line_ref"] == "t7" for r in rows)
+
+
+def test_price_fill_neither_item_nor_trade_is_unpriced(monkeypatch):
+    monkeypatch.setattr(nodes.settings, "tavily_api_key", "")
+    out = price_fill_node(_takeoff_state(
+        {"id": "t1", "category": "misc", "quantity": 1, "unit": "lump_sum"}))
+    row = out["price_resolution"][0]
+    assert row["price_source"] == "unpriced"
+    assert "no material or labor key" in row["note"]
+
+
+# --- traceability: code_item -> takeoff line -> price_resolution row --------
+
+def test_codes_node_assigns_sequential_ids_never_from_model(monkeypatch):
+    _patch_stage_retrievers(monkeypatch)
+    payload = json.loads(_codes_json())
+    payload["items"].append({**payload["items"][0], "requirement": "second item"})
+    model = _FakeStageModel(SimpleNamespace(content=json.dumps(payload), tool_calls=[]))
+    monkeypatch.setattr(nodes, "codes_model", lambda: model)
+    out = codes_node({"slots": {"scope": "basement"}})
+    ids = [i["id"] for i in out["codes_checklist"]["items"]]
+    assert ids == ["c1", "c2"]
+
+
+def test_takeoff_node_injects_synthetic_line_for_uncovered_mandatory_code_item(monkeypatch):
+    _patch_stage_retrievers(monkeypatch)
+    # the model's takeoff omits any line referencing the mandatory code item
+    takeoff_json = json.dumps({"gfa_sqft": 900, "lines": [], "assumptions": []})
+    model = _FakeStageModel(SimpleNamespace(content=takeoff_json))
+    monkeypatch.setattr(nodes, "drafting_model", lambda: model)
+    checklist = {"items": [{"id": "c1", "requirement": "egress window",
+                            "citation": "OBC 9.9.10.1", "doc_type": "building_code",
+                            "action": "line_item"}]}
+    out = takeoff_node({"slots": {"scope": "finished basement"},
+                        "codes_checklist": checklist})
+    lines = out["takeoff"]["lines"]
+    assert len(lines) == 1
+    injected = lines[0]
+    assert injected["code_item_ref"] == "c1" and injected["source"] == "code_item"
+    assert "egress window" in injected["description"]
+
+
+def test_takeoff_node_no_injection_when_code_item_covered(monkeypatch):
+    _patch_stage_retrievers(monkeypatch)
+    takeoff_json = json.dumps({"gfa_sqft": 900, "lines": [
+        {"category": "windows", "item": "egress_window", "quantity": 1,
+         "unit": "each", "source": "code_item", "code_item_ref": "c1"}],
+        "assumptions": []})
+    model = _FakeStageModel(SimpleNamespace(content=takeoff_json))
+    monkeypatch.setattr(nodes, "drafting_model", lambda: model)
+    checklist = {"items": [{"id": "c1", "requirement": "egress window",
+                            "citation": "OBC 9.9.10.1", "doc_type": "building_code",
+                            "action": "line_item"}]}
+    out = takeoff_node({"slots": {"scope": "finished basement"},
+                        "codes_checklist": checklist})
+    assert len(out["takeoff"]["lines"]) == 1  # nothing injected — already covered
+    assert out["takeoff"]["lines"][0]["id"] == "t1"  # ids assigned in code
+
+
 # --- graph wiring ------------------------------------------------------------
 
 def test_graph_compiles_and_routes_hard(monkeypatch):
