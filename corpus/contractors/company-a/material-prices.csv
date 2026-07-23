@@ -1,0 +1,10 @@
+category,item,unit,price_low_cad,price_high_cad,updated_at,source,notes
+flooring,lvp,per_sqft_cad,4.50,7.00,2026-07-10,supplier list,installed incl. underlay
+kitchen,quartz_countertop,per_sqft_cad,55,95,2026-07-10,supplier list,installed
+windows,egress_window,per_opening_cad,3500,6500,2026-05-02,sub-trade quote,concrete cut + window + well
+drywall,drywall_sheet_12ft,per_sheet_cad,18,24,2026-07-10,supplier list,1/2in regular 4x12 material only
+insulation,batt_r22,per_sqft_cad,1.10,1.60,2026-07-10,supplier list,walls incl. vapour barrier
+paint,interior_paint,per_gallon_cad,45,75,2026-07-10,supplier list,Benjamin Moore lines per guideline
+electrical,pot_light,per_fixture_cad,18,35,2026-07-10,supplier list,4in LED slim fixture only
+bathroom,floor_wall_tile,per_sqft_cad,4.00,9.00,2026-07-10,supplier list,material only per allowances tiers
+doors,interior_door,per_door_cad,180,320,2026-06-15,supplier list,shaker hollow core prehung
