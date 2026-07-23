@@ -6,6 +6,7 @@ city: 'Milton'
 street: 'Pringle Ave'
 package_tier: 'SUPERIOR'
 scope: 'accessory_unit'
+gfa_sqft: 745
 revised: false
 synthetic: true
 paired_with: 'P20'
@@ -23,19 +24,8 @@ CONSTRUCTION PROPOSAL
 LEGAL BASEMENT APARTMENT (ACCESSORY UNIT)
 COMPANY A'S SUPERIOR PACKAGE
 
-AGREEMENT OF SERVICES
-This agreement is made between Company A (the "Contractor") and the Client. The Contractor agrees to provide labor and materials necessary for the work outlined in the Scope of Work section below. All work will be performed in compliance with the Ontario Building Code and any applicable City/Town Approved Permits (if required).
 
-[CLIENT]
-[EMAIL]
-[NO] Pringle Ave, Milton [POSTAL_CODE]
-(the "Client")
 
-CHANGE ORDER POLICY
-All changes to the project must be approved and signed off by both the project manager and the Client. Change orders requested after finishes have been finalized or after scheduled work has commenced will incur an administrative fee of up to $500 per change order.
-
-WARRANTY
-Company A provides a One-Year Service Warranty on all installations.
 
 SCOPE OF WORK
 WORK DESCRIPTION: TOTAL BASEMENT GFA – 745 SQFT

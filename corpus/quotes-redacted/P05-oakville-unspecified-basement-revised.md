@@ -6,6 +6,7 @@ city: 'Oakville'
 street: 'Millstone Dr'
 package_tier: 'unspecified'
 scope: 'basement'
+gfa_sqft: 1380
 revised: true
 source_version: 'redacted 2026-07-12; original is local-only (quotes/ is gitignored)'
 ---
@@ -15,12 +16,6 @@ Two Bedrooms, Full Bathroom, Open Living & a Kitchen
 &
 “Finished Basement”
 Approximately 1380 SQFT
-Company A herein after called the “Contractor” will provide labor and materials for the work as outlined in the estimate and the specifications. The Contractor’s estimate is based on information provided by the owner, site visit reviews and the assumption that previous work has been performed following standard building practices and adequate maintenance has been performed. Unforeseen conditions requiring a change to the original scope of work may result in a work order and will be billed accordingly.
-All work will be done as per City of Oakville Permit for “Accessory Unit/Basement Apartment” & “Finished Basement”.  Client is responsible for all Permit fees & cost associated with any exteriors to comply code such as Fire rated Windows/Shutters etc.
-Work shall be between the hours of 7:30 AM to 7:30 PM. Should Contractor require occasional work outside these times, approval from the home owner should be obtained prior to the time that work is required.
-WARRANTY
-Company A’s provides One year service warranty on all installations.
-All material is guaranteed to be as specified and the work to be performed in accordance with current building codes, drawings and specifications submitted for the work and completed in substantial and satisfactory workmanlike manner.
 SCOPE OF PROJECT
 ARCHITECT / STRUCTURAL ENGINEER DRAWINGS / PERMIT:
 Architect’s SITE visit

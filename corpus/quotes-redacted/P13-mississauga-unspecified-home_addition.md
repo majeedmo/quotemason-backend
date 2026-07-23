@@ -13,63 +13,6 @@ source_version: 'redacted 2026-07-12; original is local-only (quotes/ is gitigno
  
  
  
-WHO WE ARE? 
- 
- 
-We are a PASSIONATE Team, with MODERN and 
-INNOVATIVE ideas and an eye for detail to provide high 
-quality construction and renovation solutions to exceed 
-our client expectations. We work towards providing 
-unique solutions to our clients which are inspiring and 
-functional at the same time. 
- 
-Our Priorities 
-We work very hard to deliver and cater to satisfy our 
-customers to the best of our abilities. We believe in 
-developing a strong relationship with our client, keep ing 
-in mind their choice and budget, to create their warm 
-and cozy living and work spaces according to their own 
-choices, where they can live their dream. 
- 
-Our Strength 
-Communication, Creativity and Quality  are our three 
-vital strengths. We work with our c lients by incorporating 
-their needs and ideas into our designs that are modern, 
-beautiful, functional and eco -friendly. We transform 
-simple materials into a master piece by only choosing the 
-best of skill men who are professional in their field. 
- 
-Our Services 
-▪ Design + Build Custom Homes  
-▪ Renovations & Additions 
-▪ Legal Basement Finish 
-▪ Kitchens & Bathrooms Makeover 
-▪ Commercial & Retail Space 
-▪ City/Town Permit Facilitation  
-▪ Interior Design & 3D Renderings  
-▪ Materials, Fabric, Finishes, Light Fixture, Artwork, 
-and Décor selection 
-▪ Construction Management 
- 
-Licensed & Insured  
-Tarion License # [REDACTED_ID] 
-License Type: Vendor & Builder    
-Oakville License #: [REDACTED_ID] 
-License Type: Building Renovator  
-WSIB - Workplace Safety & Insurance Board Certification 
-$5 Million Commercial General Liability Insurance 
- 
-Company A team of experts makes your dream come 
-true! 
- 
-
- 
-                                                                                                        
- 
- 
-1 
-[CONTRACTOR_ADDRESS] | Unit A | Oakville | ON | [POSTAL_CODE] | Canada 
-Contact: [PHONE], email@[REDACTED_DOMAIN], [REDACTED_DOMAIN] 
  
 Company A 
 “FROM CONCEPT TO COMPLETION – ONE CONTRACT, ONE TEAM” 
