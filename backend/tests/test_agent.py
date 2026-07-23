@@ -122,7 +122,7 @@ class _FakeRetriever:
         self.calls = []
 
     def _hit(self, cit):
-        return SimpleNamespace(citation=cit, text="...")
+        return SimpleNamespace(citation=cit, text="...", metadata={})
 
     def search_past_quotes(self, q, k=5, **kw):
         self.calls.append(("quotes", kw))
@@ -140,8 +140,10 @@ class _FakeRetriever:
 
 
 def test_retrieve_accessory_pulls_zoning_and_tier_filter(monkeypatch):
+    from app.tools import regulatory
     fake = _FakeRetriever()
     monkeypatch.setattr(nodes, "get_retriever", lambda: fake)
+    monkeypatch.setattr(regulatory, "get_retriever", lambda: fake)
     out = retrieve_node({"slots": {"scope": "legal accessory unit",
                                    "bedrooms_egress": "1 bedroom, no egress",
                                    "package_tier_budget": "superior, ~80k"}})
@@ -184,10 +186,14 @@ def test_graph_revision_entry_skips_intake(monkeypatch):
     from langgraph.checkpoint.memory import InMemorySaver
     from app.agent.graph import build_graph
 
+    from app.tools import regulatory
+
     def _explode():
         raise AssertionError("intake_model must not be called on a revision")
     monkeypatch.setattr(nodes, "intake_model", _explode)
-    monkeypatch.setattr(nodes, "get_retriever", lambda: _FakeRetriever())
+    fake = _FakeRetriever()
+    monkeypatch.setattr(nodes, "get_retriever", lambda: fake)
+    monkeypatch.setattr(regulatory, "get_retriever", lambda: fake)
     monkeypatch.setattr(nodes.settings, "tavily_api_key", "")
 
     seen = {}
