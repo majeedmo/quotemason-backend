@@ -27,6 +27,17 @@ def test_citation_building_code():
                           " | 2024 Building Code Compendium (O. Reg. 163/24)")
 
 
+def test_citation_guideline_uses_contractor_name_from_metadata():
+    c = RetrievedChunk(text="", score=1.0, metadata={
+        "doc_type": "builder_guideline", "contractor_name": "Company A",
+        "section_number": "5", "section_title": "Quoting rules"})
+    assert c.citation == "Company A builder guidelines — 5 Quoting rules"
+    bare = RetrievedChunk(text="", score=1.0, metadata={
+        "doc_type": "builder_guideline", "section_number": "5",
+        "section_title": "Quoting rules"})
+    assert bare.citation.startswith("Builder builder guidelines")
+
+
 def test_citation_synthetic_quote_is_marked():
     c = RetrievedChunk(text="", score=1.0, metadata={
         "doc_type": "past_project_quote", "project_code": "S01",
@@ -62,8 +73,24 @@ def test_search_builds_filter_and_maps_payload():
     call = fake.calls[0]
     assert call.limit == 3
     must_keys = {c.key for c in call.query_filter.must}
-    assert must_keys == {"metadata.doc_type", "metadata.package_tier"}
+    assert must_keys == {"metadata.doc_type", "metadata.package_tier",
+                         "metadata.contractor_id"}
     assert [c.key for c in call.query_filter.must_not] == ["metadata.synthetic"]
+
+
+def test_contractor_scoped_helpers_default_to_settings(monkeypatch):
+    """search_guidelines / search_past_quotes are tenant-scoped: the deployment's
+    contractor_id is always in the filter unless explicitly overridden."""
+    from app.retrieval import retriever as mod
+    monkeypatch.setattr(mod.settings, "contractor_id", "company-b")
+    fake = _FakeClient()
+    r = CorpusRetriever(client=fake, embeddings=_FakeEmbeddings())
+    r.search_guidelines("allowances", k=2)
+    conds = {c.key: c.match.value for c in fake.calls[0].query_filter.must}
+    assert conds["metadata.contractor_id"] == "company-b"
+    r.search_guidelines("allowances", k=2, contractor_id="company-a")
+    conds = {c.key: c.match.value for c in fake.calls[1].query_filter.must}
+    assert conds["metadata.contractor_id"] == "company-a"
 
 
 def test_search_no_filters_passes_none():

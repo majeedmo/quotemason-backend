@@ -11,6 +11,15 @@ CORPUS_DIR = REPO_DIR / "corpus"
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=BACKEND_DIR / ".env", extra="ignore")
 
+    # The contractor this deployment serves. One process = one contractor;
+    # a second contractor is a config + data exercise (own guidelines/quotes
+    # ingested under their contractor_id), never a code change.
+    contractor_id: str = "company-a"
+    contractor_name: str = "Company A"          # internal name (guideline vocabulary)
+    brand_name: str = "Maplewood Renovations"   # client-facing brand
+    zoning_jurisdiction: str = "cambridge"
+    price_staleness_days: int = 90
+
     openai_api_key: str = ""
     embedding_model: str = "text-embedding-3-small"
 

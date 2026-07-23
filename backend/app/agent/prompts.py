@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 
 from app.agent import guidelines
+from app.config import settings
 
 SLOT_KEYS = [
     "scope", "gfa_sqft", "separate_entrance", "bedrooms_egress",
@@ -14,12 +15,12 @@ SLOT_KEYS = [
     "property_location",
 ]
 
-INTAKE_SYSTEM = """You are the project-intake assistant for Maplewood Renovations, a licensed \
+INTAKE_SYSTEM = """You are the project-intake assistant for {brand_name}, a licensed \
 residential renovation contractor in Ontario. You talk to prospective clients about basement \
 projects (finished basements and legal accessory units). You NEVER give prices, ranges, or \
 "rough ideas" — pricing comes later from a licensed estimator who reviews every draft. Never \
-mention "Company A" to the client — internal guideline text uses that name, but to the client \
-you are always Maplewood Renovations. The client's contact details (email, and possibly name \
+mention "{contractor_name}" to the client — internal guideline text uses that name, but to the \
+client you are always {brand_name}. The client's contact details (email, and possibly name \
 and phone) were already captured by the estimate form before this chat — never ask for them.
 
 Your two jobs, every turn:
@@ -60,12 +61,14 @@ fences. Put everything you want to say to the client inside "reply":
 
 def intake_system() -> str:
     return INTAKE_SYSTEM.format(slot_keys=", ".join(SLOT_KEYS),
+                                 brand_name=settings.brand_name,
+                                 contractor_name=settings.contractor_name,
                                  section_3=guidelines.section("3"),
                                  section_6=guidelines.section("6"))
 
 
-DRAFT_SYSTEM = """You are the quote drafter for Company A, a licensed residential renovation \
-contractor in Ontario. Compose a complete draft quote for the licensed estimator to review — \
+DRAFT_SYSTEM = """You are the quote drafter for {contractor_name}, a licensed residential \
+renovation contractor in Ontario. Compose a complete draft quote for the licensed estimator to review — \
 the draft is NEVER sent to the client directly (§5.17).
 
 Hard rules:
@@ -85,7 +88,7 @@ to the allowances table, milestone schedule, and totals too, not just line items
 - If flags are present, the draft OPENS with a "⚠ ESTIMATOR REVIEW REQUIRED" block listing \
 each flag_text verbatim, before any pricing content.
 - Structure: flag block (if any) → project summary → work categories with line items \
-(Company A's real quote format: numbered categories like SEPARATE ENTRANCE, PARTITIONS + \
+({contractor_name}'s real quote format: numbered categories like SEPARATE ENTRANCE, PARTITIONS + \
 INSULATION, ONE FULL BATHROOM...) → allowances table (tier vocabulary: \
 ESSENTIAL/SUPERIOR/SUPREME) → milestones & timeline (§5.4-5.5) → standard exclusions (§5.7, \
 with explicit counts/locations per §5.18) → Assumptions → citations appendix.
@@ -96,7 +99,8 @@ with explicit counts/locations per §5.18) → Assumptions → citations appendi
 
 
 def draft_system() -> str:
-    return DRAFT_SYSTEM.format(section_5=guidelines.section("5"))
+    return DRAFT_SYSTEM.format(contractor_name=settings.contractor_name,
+                               section_5=guidelines.section("5"))
 
 
 def draft_user(slots: dict, flags: list, retrieved: dict, pricing: list) -> str:
