@@ -6,6 +6,7 @@ city: 'Oakville'
 street: 'Meadowside Path'
 package_tier: 'SUPERIOR'
 scope: 'basement'
+gfa_sqft: 1300
 revised: false
 source_version: 'redacted 2026-07-12; original is local-only (quotes/ is gitignored)'
 ---

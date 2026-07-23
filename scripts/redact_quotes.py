@@ -190,6 +190,30 @@ def strip_boilerplate(text: str) -> str:
     return text
 
 
+# --- GFA (project size) extraction ---------------------------------------------
+#
+# GFA is the primary comparability signal the pipeline already reasons about
+# (job-size bands, $/sqft rules of thumb) but wasn't structured anywhere --
+# only present, inconsistently, as free text near the top of some quotes.
+# Two wordings cover most of the corpus; a handful of files (redaction-map
+# "gfa_sqft" override) state no total sqft anywhere in the source at all --
+# supplied there from the owner's own records rather than left to guesswork,
+# consistent with this script's "never fabricate" redaction policy.
+_GFA_PATTERNS = [
+    re.compile(r"Approximately\s+([\d,]+)\s+SQFT", re.I),
+    re.compile(r"(?:TOTAL\s+BASEMENT\s+GFA|approximately\s+GFA)\s*[–-]\s*([\d,]+)\s+SQFT", re.I),
+]
+
+
+def extract_gfa_sqft(text: str, meta: dict) -> int | None:
+    for pat in _GFA_PATTERNS:
+        m = pat.search(text)
+        if m:
+            return int(m.group(1).replace(",", ""))
+    override = meta.get("gfa_sqft")
+    return int(override) if override is not None else None
+
+
 def extract_docx(path: Path) -> str:
     d = Document(path)
     out = [p.text.strip() for p in d.paragraphs if p.text.strip()]
@@ -230,9 +254,10 @@ def main() -> None:
         # boilerplate trim runs after PII redaction: its patterns reference
         # redaction output tokens like [CONTRACTOR_ADDRESS]
         clean = strip_boilerplate(clean)
+        gfa = extract_gfa_sqft(clean, meta)
         slug = f"{meta['code']}-{meta['city'].lower()}-{meta['tier'].lower()}-{meta['scope']}" + (
             "-revised" if meta["revised"] else "")
-        fm = "\n".join([
+        fm_lines = [
             "---",
             f"project_code: '{meta['code']}'",
             "doc_type: 'past_project_quote'",
@@ -241,11 +266,16 @@ def main() -> None:
             f"street: '{meta.get('street', 'unspecified')}'",
             f"package_tier: '{meta['tier']}'",
             f"scope: '{meta['scope']}'",
+        ]
+        if gfa is not None:
+            fm_lines.append(f"gfa_sqft: {gfa}")
+        fm_lines += [
             f"revised: {str(meta['revised']).lower()}",
             "source_version: 'redacted 2026-07-12; original is local-only (quotes/ is gitignored)'",
             "---",
             "",
-        ])
+        ]
+        fm = "\n".join(fm_lines)
         out_path = OUT / f"{slug}.md"
         out_path.write_text(fm + clean + "\n")
         written += 1

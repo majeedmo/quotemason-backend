@@ -6,6 +6,7 @@ city: 'Milton'
 street: 'Colville Place'
 package_tier: 'ESSENTIAL'
 scope: 'accessory_unit'
+gfa_sqft: 950
 revised: false
 source_version: 'redacted 2026-07-12; original is local-only (quotes/ is gitignored)'
 ---

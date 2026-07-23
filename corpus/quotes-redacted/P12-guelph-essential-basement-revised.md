@@ -6,6 +6,7 @@ city: 'Guelph'
 street: 'Wilton Rd'
 package_tier: 'ESSENTIAL'
 scope: 'basement'
+gfa_sqft: 900
 revised: true
 source_version: 'redacted 2026-07-12; original is local-only (quotes/ is gitignored)'
 ---

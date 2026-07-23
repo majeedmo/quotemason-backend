@@ -6,6 +6,7 @@ city: 'Milton'
 street: 'Pringle Road'
 package_tier: 'unspecified'
 scope: 'basement'
+gfa_sqft: 700
 revised: false
 source_version: 'redacted 2026-07-12; original is local-only (quotes/ is gitignored)'
 ---

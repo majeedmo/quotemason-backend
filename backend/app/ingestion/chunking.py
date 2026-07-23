@@ -167,7 +167,9 @@ _QUOTE_BOILERPLATE = re.compile(
 def chunk_quote(doc: CorpusDoc) -> list[Chunk]:
     code = doc.metadata.get("project_code", "?")
     syn = " (SYNTHETIC)" if doc.metadata.get("synthetic") else ""
-    prefix = (f"[Past project {code}{syn} — {{city}}, {{package_tier}} package, {{scope}}"
+    gfa = doc.metadata.get("gfa_sqft")
+    gfa_str = f", ~{gfa} sqft" if gfa else ""
+    prefix = (f"[Past project {code}{syn} — {{city}}, {{package_tier}} package, {{scope}}{gfa_str}"
               " | section: {num} {title}]")
     marks = sorted(
         [(m.start(), m.group(1) or "", m.group(2).strip()) for m in _QUOTE_HEADING.finditer(doc.text)]

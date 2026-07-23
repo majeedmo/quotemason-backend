@@ -6,6 +6,7 @@ city: 'Milton'
 street: 'Pringle Ave'
 package_tier: 'SUPERIOR'
 scope: 'accessory_unit'
+gfa_sqft: 745
 revised: false
 synthetic: true
 paired_with: 'P20'

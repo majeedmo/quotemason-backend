@@ -6,6 +6,7 @@ city: 'Mississauga'
 street: 'Nolan Road'
 package_tier: 'unspecified'
 scope: 'basement'
+gfa_sqft: 750
 revised: true
 source_version: 'redacted 2026-07-12; original is local-only (quotes/ is gitignored)'
 ---
