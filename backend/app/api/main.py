@@ -75,10 +75,19 @@ def healthz():
     return {"ok": True}
 
 
+def _stage_outputs(state: dict) -> dict | None:
+    """The pipeline's structured outputs, persisted with the draft — the
+    quote-accuracy eval asserts against these, not the prose."""
+    out = {k: state.get(k)
+           for k in ("codes_checklist", "takeoff", "price_resolution")}
+    return out if any(out.values()) else None
+
+
 def _finish_draft(thread_id: str, contact: dict[str, str] | None) -> None:
-    """Resume the graph interrupted after intake (retrieve -> pricing ->
-    draft) and persist the result for the estimator queue. Runs as a
-    background task — the customer never waits on (or sees) the draft."""
+    """Resume the graph interrupted after intake (codes -> takeoff ->
+    price_fill -> draft) and persist the result for the estimator queue.
+    Runs as a background task — the customer never waits on (or sees) the
+    draft."""
     try:
         state = deps.get_graph().invoke(
             None, {"configurable": {"thread_id": thread_id}})
@@ -92,7 +101,8 @@ def _finish_draft(thread_id: str, contact: dict[str, str] | None) -> None:
     packet = state.get("routing_packet") or {}
     if contact:
         packet = {**packet, "contact": contact}
-    deps.get_store().create_draft(thread_id, state["draft"], packet or None)
+    deps.get_store().create_draft(thread_id, state["draft"], packet or None,
+                                  stage_outputs=_stage_outputs(state))
 
 
 @app.post("/chat")
@@ -103,7 +113,7 @@ def chat(body: ChatIn, background: BackgroundTasks):
     state = deps.get_graph().invoke(
         {"messages": [HumanMessage(body.message)]},
         {"configurable": {"thread_id": body.thread_id}},
-        interrupt_before=["retrieve"])
+        interrupt_before=["codes"])
     if state.get("_action") == "complete":
         background.add_task(_finish_draft, body.thread_id, body.contact)
     return {"reply": state["messages"][-1].content,
@@ -180,5 +190,5 @@ def revise_quote(quote_id: int, body: ReviseIn):
     prev_contact = (row.get("routing_packet") or {}).get("contact")
     if prev_contact:
         packet = {**packet, "contact": prev_contact}
-    return store.create_draft(row["thread_id"], state["draft"],
-                              packet or None)
+    return store.create_draft(row["thread_id"], state["draft"], packet or None,
+                              stage_outputs=_stage_outputs(state))

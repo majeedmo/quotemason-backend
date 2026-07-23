@@ -5,7 +5,8 @@ from datetime import date
 import pytest
 
 from app.pricing import materials
-from app.pricing.materials import PriceRow, is_stale, load_price_sheet, lookup
+from app.pricing.materials import (PriceRow, is_stale, load_price_sheet,
+                                   lookup, quoted_price)
 
 _HEADER = "category,item,unit,price_low_cad,price_high_cad,updated_at,source,notes\n"
 
@@ -70,6 +71,14 @@ def test_lookup_reads_committed_repo_sheet():
         assert lookup("flooring", "unobtainium") is None
     finally:
         materials._sheet.cache_clear()
+
+
+def test_quoted_price_is_always_the_midpoint():
+    """Materials carry no job-size axis (unlike labor rates) — always the
+    midpoint, regardless of how large the project is."""
+    row = PriceRow(category="c", item="i", unit="u", price_low_cad=4.0,
+                   price_high_cad=6.0, updated_at=date(2026, 1, 1), source="s")
+    assert quoted_price(row) == 5.0
 
 
 def test_repo_sheet_is_outside_the_rag_ingestion_glob():

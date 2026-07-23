@@ -17,7 +17,8 @@ class FakeStore:
         self.rows: dict[int, dict] = {}
         self._id = 0
 
-    def create_draft(self, thread_id, draft_md, routing_packet=None):
+    def create_draft(self, thread_id, draft_md, routing_packet=None,
+                     stage_outputs=None):
         for r in self.rows.values():
             if (r["thread_id"] == thread_id
                     and r["status"] in ("pending_review", "edited")):
@@ -27,6 +28,7 @@ class FakeStore:
                            if r["thread_id"] == thread_id), default=0)
         row = {"id": self._id, "thread_id": thread_id, "version": version,
                "draft_md": draft_md, "routing_packet": routing_packet,
+               "stage_outputs": stage_outputs,
                "status": "pending_review", "estimator_edit_md": None}
         self.rows[self._id] = row
         return row
@@ -81,7 +83,12 @@ def _set_graph(monkeypatch, state):
 
 DRAFT_STATE = {"messages": [type("M", (), {"content": "Draft attached"})()],
                "_action": "complete", "draft": "# Quote v1",
-               "trigger": {"level": "clear"}, "routing_packet": None}
+               "trigger": {"level": "clear"}, "routing_packet": None,
+               "codes_checklist": {"items": []},
+               "takeoff": {"lines": [{"category": "flooring", "item": "lvp",
+                                      "quantity": 900, "unit": "sqft"}]},
+               "price_resolution": [{"category": "flooring", "item": "lvp",
+                                     "price_source": "price_sheet"}]}
 
 
 def test_chat_complete_persists_draft(api, monkeypatch):
@@ -93,8 +100,10 @@ def test_chat_complete_persists_draft(api, monkeypatch):
     assert out["quote_id"] is None and out["action"] == "complete"
     row = api.get("/quotes/1").json()
     assert row["draft_md"] == "# Quote v1" and row["status"] == "pending_review"
-    # first call is the intake turn paused before retrieval; second resumes it
-    assert g.calls[0][2] == {"interrupt_before": ["retrieve"]}
+    # the structured stage outputs ride along for the accuracy eval
+    assert row["stage_outputs"]["takeoff"]["lines"][0]["item"] == "lvp"
+    # first call is the intake turn paused before the pipeline; second resumes
+    assert g.calls[0][2] == {"interrupt_before": ["codes"]}
     assert g.calls[1][0] is None
 
 
