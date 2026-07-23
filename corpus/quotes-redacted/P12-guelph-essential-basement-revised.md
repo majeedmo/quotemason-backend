@@ -13,64 +13,6 @@ source_version: 'redacted 2026-07-12; original is local-only (quotes/ is gitigno
  
  
  
-WHO WE ARE 
- 
-We are a PASSIONATE Team, with MODERN and 
-INNOVATIVE ideas and an eye for detail to 
-provide high quality construction and renovation 
-solutions to exceed our client expectations. We 
-work towards providing unique solutions to our 
-clients which are inspiring and functional at the 
-same time. 
- 
-Our Priorities 
-We work very hard to deliver and cater to satisfy 
-our customers to the best of our a bilities. We 
-believe in developing a strong relationship with 
-our client, keeping in mind their choice and 
-budget, to create their warm and cozy living and 
-work spaces according to their own choices, 
-where they can live their dream. 
- 
-Our Strength 
-Communication, Creativity and Quality  are our 
-three vital strengths. We work with our clients by 
-incorporating their needs and ideas into our 
-designs that are modern, beautiful, functional 
-and eco -friendly. We transform simple materials 
-into a master piece by only choosing the best of 
-skill men who are professional in their field. 
- 
-Our Services 
-▪ Design + Build Custom Homes  
-▪ Renovations & Additions 
-▪ Legal Basement Finish 
-▪ Kitchens & Bathrooms Makeover 
-▪ Commercial & Retail Space 
-▪ City/Town Permit Facilitation  
-▪ Interior Design & 3D Renderings  
-▪ Materials, Fabric, Finishes, Light Fixture, 
-Artwork, and Décor selection 
-▪ Construction Management 
- 
-Licensed & Insured  
-WSIB - Workplace Safety & Insurance Board  
-$5 Million Commercial General Liability Insurance 
- 
-Company A team of experts makes your dream 
-come true! 
- 
- 
-
- 
- 
- 
-MODERN DESIGN | INNOVATIVE BUILD  
- 
- 1 
-[CONTRACTOR_ADDRESS] | Unit A | Oakville | ON | [POSTAL_CODE] | Canada 
-Contact: [PHONE], email@[REDACTED_DOMAIN] 
-[REDACTED_DOMAIN] 
  
 Legal Basement Apartment Proposal 
 (REVISED 2) 
@@ -80,22 +22,11 @@ Legal Basement Apartment Proposal
  
  
  
-Company A herein after called the “Contractor” will provide labor and materials for 
-the work as outlined in the “scope of work” below. The Contractor’s estimate is based on 
-information provided by the owner, site visit reviews and the assumption that previous work has 
-been performed following standard building practices and adequate maintenance has been 
-performed. Unforeseen conditions requiring a change to the original scope of work may result in 
-a work order and will be billed accordingly. 
- 
 All work will be done as per Ontario Building Code & City/Town Approved Permit (If required) for 
 ☐  “New Build – Custom Home”    ☐  “Home Renovation | Addition” 
 ☐  “Garden Suite” – Separate Dwelling   ☐  “Kitchen Makeover” 
 ☑  “Basement Finish” – Personal or Rental    ☐  “Bathroom(s) Makeover” 
 ☐  “Commercial Space Reno” 
- 
-Work shall be between the hours of 7:30 AM to 7:30 PM. Should Contractor require occasional 
-work outside these times, approval from the home owner should be obtained prior to the time 
-that work is required. 
  
 CHANGE ORDERS: All changes made to project will require sign offs (per task) from project 
 manager, as well as home owner. Changes will only be implemented if sign offs have been 

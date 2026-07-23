@@ -153,7 +153,13 @@ def _chunk_defined_terms(doc: CorpusDoc, batch_chars: int = 1800) -> list[Chunk]
 _QUOTE_HEADING = re.compile(
     r"^\s*(\d{1,2})\s*\|?\s+([A-Z][A-Z0-9 /&()+.,'’-]{4,80}?):", re.M)
 _QUOTE_BOILERPLATE = re.compile(
-    r"^\s*(AGREEMENT OF SERVICES|CHANGE ORDER POLICY|CHANGE ORDERS|EXCLUSIONS|WARRANTY|"
+    # AGREEMENT OF SERVICES / CHANGE ORDER POLICY / WARRANTY are stripped
+    # entirely at redaction time (scripts/redact_quotes.py strip_boilerplate)
+    # -- verbatim-identical contractual boilerplate across every quote,
+    # already the guideline doc's job (§5) -- so they can no longer appear
+    # here; CHANGE ORDERS kept as a safety net (an inline, non-heading
+    # variant of that text isn't caught by the redaction-time stripper).
+    r"^\s*(CHANGE ORDERS|EXCLUSIONS|"
     r"OUT OF SCOPE|ADD[- ]?ONS?|PROJECT COST|RENOVATION / CONSTRUCTION MILESTONES|NOTE)\b[:\s]*$",
     re.M | re.I)
 
