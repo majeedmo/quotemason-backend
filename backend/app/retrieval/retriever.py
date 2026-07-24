@@ -20,7 +20,7 @@ from functools import lru_cache
 
 from langchain_openai import OpenAIEmbeddings
 from qdrant_client import QdrantClient
-from qdrant_client.http.models import FieldCondition, Filter, MatchValue
+from qdrant_client.http.models import FieldCondition, Filter, MatchAny, MatchValue
 
 from app.config import settings
 
@@ -54,9 +54,16 @@ class RetrievedChunk:
 
 def _conditions(meta_filters: dict) -> list[FieldCondition]:
     """None-valued filters mean 'no constraint', so optional arguments can be
-    passed straight through."""
-    return [FieldCondition(key=f"metadata.{k}", match=MatchValue(value=v))
-            for k, v in meta_filters.items() if v is not None]
+    passed straight through. A list/tuple value means "any of these" (e.g.
+    excluding a set of project codes for leave-one-out eval retrieval) —
+    no existing caller passed one before, so this is purely additive."""
+    out = []
+    for k, v in meta_filters.items():
+        if v is None:
+            continue
+        match = MatchAny(any=list(v)) if isinstance(v, (list, tuple)) else MatchValue(value=v)
+        out.append(FieldCondition(key=f"metadata.{k}", match=match))
+    return out
 
 
 def _default_client() -> QdrantClient:
@@ -117,16 +124,22 @@ class CorpusRetriever:
                            package_tier: str | None = None,
                            scope: str | None = None,
                            include_synthetic: bool = True,
-                           contractor_id: str | None = None) -> list[RetrievedChunk]:
+                           contractor_id: str | None = None,
+                           exclude_project_codes: list[str] | None = None) -> list[RetrievedChunk]:
         """Comparable past projects, scoped to the deployment's contractor.
         Frontmatter vocabulary: package_tier is ESSENTIAL/SUPERIOR/SUPREME;
         scope e.g. 'basement', 'finished_basement', 'accessory_unit'; city is
-        title-case ('Guelph', 'Oakville')."""
+        title-case ('Guelph', 'Oakville'). exclude_project_codes is for
+        leave-one-out accuracy-eval retrieval — excludes a project's own
+        historical quote (and its synthetic twin) so the pipeline can't
+        retrieve its own answer; None/absent in every production call site."""
         must = {"doc_type": "past_project_quote",
                 "contractor_id": contractor_id or settings.contractor_id,
                 "city": city, "package_tier": package_tier, "scope": scope}
-        must_not = None if include_synthetic else {"synthetic": True}
-        return self.search(query, k=k, must=must, must_not=must_not)
+        must_not = {} if include_synthetic else {"synthetic": True}
+        if exclude_project_codes:
+            must_not["project_code"] = list(exclude_project_codes)
+        return self.search(query, k=k, must=must, must_not=must_not or None)
 
 
 @lru_cache(maxsize=1)
