@@ -16,3 +16,4 @@ bathroom,toilet,per_unit_cad,250,700,2026-07-24,web market research 2026,product
 bathroom,mirror,per_unit_cad,100,450,2026-07-24,web market research 2026,spans standard to LED; allowances CSV is spec-only for this item at every tier (no $)
 flooring,baseboards,per_linear_ft_cad,5.00,7.00,2026-07-24,web market research 2026,material only (installation already bundled into flooring_install_lvp labor); allowances CSV is spec-only for this item (no $)
 subfloor,dmx_panel,per_sqft_cad,3.00,5.00,2026-07-24,web market research 2026,DMX 1-Step or equivalent basement subfloor membrane; material only, installation via subfloor_dmx labor trade
+doors,hardware,per_door_cad,20,90,2026-07-24,web market research 2026,product cost only (passage knob to TAYMOR lever/lock set per door); allowances CSV is spec-only for this item at every tier (no $); installation bundled into millwork_doors_trim labor
