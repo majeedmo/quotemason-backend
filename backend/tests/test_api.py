@@ -18,7 +18,8 @@ class FakeStore:
         self._id = 0
 
     def create_draft(self, thread_id, draft_md, routing_packet=None,
-                     stage_outputs=None):
+                     stage_outputs=None, contact_email=None,
+                     contact_phone=None, property_key=None):
         for r in self.rows.values():
             if (r["thread_id"] == thread_id
                     and r["status"] in ("pending_review", "edited")):
@@ -29,9 +30,26 @@ class FakeStore:
         row = {"id": self._id, "thread_id": thread_id, "version": version,
                "draft_md": draft_md, "routing_packet": routing_packet,
                "stage_outputs": stage_outputs,
+               "contact_email": contact_email, "contact_phone": contact_phone,
+               "property_key": property_key,
                "status": "pending_review", "estimator_edit_md": None}
         self.rows[self._id] = row
         return row
+
+    def find_active_duplicate(self, property_key, since):
+        for r in self.rows.values():
+            if r["property_key"] == property_key and r["status"] != "superseded":
+                return r
+        return None
+
+    def count_recent_properties_for_contact(self, email, phone, since):
+        # Mirror SQL NULL semantics: a NULL parameter never matches a NULL
+        # column, so an absent email/phone can't accidentally group rows.
+        keys = {r["property_key"] for r in self.rows.values()
+                if r["status"] != "superseded" and r["property_key"] is not None
+                and ((email is not None and r["contact_email"] == email)
+                     or (phone is not None and r["contact_phone"] == phone))}
+        return len(keys)
 
     def get(self, quote_id):
         return self.rows.get(quote_id)
@@ -155,6 +173,59 @@ def test_revise_creates_v2_and_supersedes_v1(api, monkeypatch):
     payload, config, _ = g.calls[0]
     assert payload["estimator_feedback"] == "drop the sauna"
     assert config["configurable"]["thread_id"] == "t1"
+
+
+def test_chat_blocks_duplicate_property_before_expiry(api, monkeypatch):
+    state = {**DRAFT_STATE,
+             "slots": {"scope": "basement", "property_location": "123 Main St, Cambridge"}}
+    _set_graph(monkeypatch, state)
+    out1 = api.post("/chat", json={"thread_id": "t1", "message": "spec"}).json()
+    assert out1["action"] == "complete"
+    assert len(api.get("/quotes").json()) == 1
+
+    # a different thread, same scope+address -> blocked, no second row
+    _set_graph(monkeypatch, state)
+    out2 = api.post("/chat", json={"thread_id": "t2", "message": "spec"}).json()
+    assert out2["action"] == "duplicate_blocked"
+    assert len(api.get("/quotes").json()) == 1
+
+
+def test_chat_allows_different_scope_at_same_address(api, monkeypatch):
+    """scope is part of the dedup key -- a kitchen quote and a separate
+    basement quote at the same address are not duplicates."""
+    basement = {**DRAFT_STATE,
+               "slots": {"scope": "basement", "property_location": "1 Elm St"}}
+    _set_graph(monkeypatch, basement)
+    out1 = api.post("/chat", json={"thread_id": "t1", "message": "spec"}).json()
+    assert out1["action"] == "complete"
+
+    kitchen = {**DRAFT_STATE,
+              "slots": {"scope": "kitchen", "property_location": "1 Elm St"}}
+    _set_graph(monkeypatch, kitchen)
+    out2 = api.post("/chat", json={"thread_id": "t2", "message": "spec"}).json()
+    assert out2["action"] == "complete"
+    assert len(api.get("/quotes").json()) == 2
+
+
+def test_chat_rate_limits_contact_across_many_properties(api, monkeypatch):
+    monkeypatch.setattr(settings, "max_quotes_per_contact_window", 2)
+    contact = {"email": "Spammer@Example.com"}
+    for i in range(2):
+        state = {**DRAFT_STATE,
+                 "slots": {"scope": "basement", "property_location": f"{i} Main St"}}
+        _set_graph(monkeypatch, state)
+        out = api.post("/chat", json={"thread_id": f"t{i}", "message": "spec",
+                                      "contact": contact}).json()
+        assert out["action"] == "complete"
+
+    # a third distinct property from the same (case-insensitive) contact -> blocked
+    state = {**DRAFT_STATE,
+             "slots": {"scope": "basement", "property_location": "999 Main St"}}
+    _set_graph(monkeypatch, state)
+    out = api.post("/chat", json={"thread_id": "t99", "message": "spec",
+                                  "contact": {"email": "spammer@example.com"}}).json()
+    assert out["action"] == "rate_limited"
+    assert len(api.get("/quotes").json()) == 2
 
 
 def test_revise_missing_and_terminal(api, monkeypatch):

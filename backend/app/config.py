@@ -20,6 +20,13 @@ class Settings(BaseSettings):
     zoning_jurisdiction: str = "cambridge"
     price_staleness_days: int = 90
 
+    # Duplicate-quote guardrails (see backend/app/guardrails.py). A quote for
+    # the same property is "still active" for this many days; the same
+    # contact (email/phone) can start quotes for at most this many distinct
+    # properties within that same window.
+    quote_expiry_days: int = 90
+    max_quotes_per_contact_window: int = 3
+
     openai_api_key: str = ""
     embedding_model: str = "text-embedding-3-small"
 

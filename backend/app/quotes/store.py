@@ -14,6 +14,7 @@ and supersedes the active row, so the full draft history is auditable.
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from typing import Any
 
 import psycopg
@@ -38,9 +39,25 @@ CREATE TABLE IF NOT EXISTS quote_drafts (
 );
 ALTER TABLE quote_drafts ADD COLUMN IF NOT EXISTS contractor_id TEXT;
 ALTER TABLE quote_drafts ADD COLUMN IF NOT EXISTS stage_outputs JSONB;
+ALTER TABLE quote_drafts ADD COLUMN IF NOT EXISTS contact_email TEXT;
+ALTER TABLE quote_drafts ADD COLUMN IF NOT EXISTS contact_phone TEXT;
+ALTER TABLE quote_drafts ADD COLUMN IF NOT EXISTS property_key TEXT;
 CREATE INDEX IF NOT EXISTS idx_quote_drafts_status
     ON quote_drafts (status);
+CREATE INDEX IF NOT EXISTS idx_quote_drafts_property_key
+    ON quote_drafts (property_key);
+CREATE INDEX IF NOT EXISTS idx_quote_drafts_contact_email
+    ON quote_drafts (contact_email);
+CREATE INDEX IF NOT EXISTS idx_quote_drafts_contact_phone
+    ON quote_drafts (contact_phone);
 """
+
+# Guardrail queries (find_active_duplicate, count_recent_properties_for_contact)
+# treat every non-superseded row as "still an active quote" -- an approved
+# and presumably-sent quote for the same property last week is still "you
+# already have a live quote for this"; only a superseded (revised) row
+# should stop counting.
+_NOT_SUPERSEDED = "status != 'superseded'"
 
 ACTIVE_STATUSES = ("pending_review", "edited")
 
@@ -62,7 +79,10 @@ class QuoteStore:
 
     def create_draft(self, thread_id: str, draft_md: str,
                      routing_packet: dict | None = None,
-                     stage_outputs: dict | None = None) -> dict[str, Any]:
+                     stage_outputs: dict | None = None,
+                     contact_email: str | None = None,
+                     contact_phone: str | None = None,
+                     property_key: str | None = None) -> dict[str, Any]:
         """Insert the next version for this thread, superseding any active one."""
         with self._conn() as c:
             c.execute(
@@ -71,14 +91,45 @@ class QuoteStore:
                 (thread_id, list(ACTIVE_STATUSES)))
             return c.execute(
                 "INSERT INTO quote_drafts (thread_id, contractor_id, version, "
-                "draft_md, routing_packet, stage_outputs) "
+                "draft_md, routing_packet, stage_outputs, contact_email, "
+                "contact_phone, property_key) "
                 "VALUES (%s, %s, COALESCE((SELECT max(version) FROM quote_drafts "
-                "                          WHERE thread_id = %s), 0) + 1, %s, %s, %s) "
+                "                          WHERE thread_id = %s), 0) + 1, "
+                "%s, %s, %s, %s, %s, %s) "
                 "RETURNING *",
                 (thread_id, settings.contractor_id, thread_id, draft_md,
                  json.dumps(routing_packet) if routing_packet else None,
-                 json.dumps(stage_outputs) if stage_outputs else None),
+                 json.dumps(stage_outputs) if stage_outputs else None,
+                 contact_email, contact_phone, property_key),
             ).fetchone()
+
+    def find_active_duplicate(self, property_key: str,
+                              since: datetime) -> dict[str, Any] | None:
+        """Most recent non-superseded row for this property since `since` --
+        the guardrail against quoting the same job twice before it expires."""
+        with self._conn() as c:
+            return c.execute(
+                f"SELECT * FROM quote_drafts WHERE property_key = %s "
+                f"AND created_at > %s AND {_NOT_SUPERSEDED} "
+                f"ORDER BY created_at DESC LIMIT 1",
+                (property_key, since)).fetchone()
+
+    def count_recent_properties_for_contact(self, email: str | None,
+                                            phone: str | None,
+                                            since: datetime) -> int:
+        """Distinct properties this contact (by email or phone) has started
+        a quote for since `since` -- the velocity guardrail against one
+        contact bombarding the system with many different fake addresses."""
+        if not email and not phone:
+            return 0
+        with self._conn() as c:
+            row = c.execute(
+                f"SELECT COUNT(DISTINCT property_key) AS n FROM quote_drafts "
+                f"WHERE (contact_email = %s OR contact_phone = %s) "
+                f"AND property_key IS NOT NULL AND created_at > %s "
+                f"AND {_NOT_SUPERSEDED}",
+                (email, phone, since)).fetchone()
+            return row["n"] if row else 0
 
     def get(self, quote_id: int) -> dict[str, Any] | None:
         with self._conn() as c:
