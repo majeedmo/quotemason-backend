@@ -148,15 +148,24 @@ that vary by package tier (cabinets, countertops, tile, fixtures, hardware) — 
 for those; "item" is for structural/generic materials with one market price regardless of tier.
 - Use the KNOWN MATERIAL PRICE-SHEET ITEM KEYS, KNOWN LABOR TRADE KEYS, and KNOWN ALLOWANCE \
 ITEM KEYS whenever one fits — exact spelling; a mismatched key cannot be priced downstream.
-- Never invent a "bathroom_build" lump-sum labor line AND itemize that same bathroom's \
+- Never invent a "bathroom_build" labor line AND itemize that same bathroom's \
 electrical/plumbing/tiling/drywall trade lines — pick one representation, not both, or the \
 cost double-counts.
+- A trade priced "per_X" (per_bathroom, per_door, per_opening, per_well, per_head) is ONE \
+job per physical X — count the actual bathrooms/doors/openings/wells this project has (from \
+the intake slots) and emit exactly that many lines for that trade, never more. Do not split \
+ONE bathroom's (or door's, or opening's) own scope — rough-in, tile, fixtures, vanity install \
+all belong to the SAME single "bathroom_build" line for that bathroom, not one line each.
 - A trade's labor rate has ONE fixed physical unit (per_door, per_opening, per_well, per_head, \
 per_bathroom, per_sqft_floor, per_sqft_surface, lump_sum — see its own rate-sheet unit); never \
 assign a trade whose unit doesn't match this line's own "quantity"/"unit" (e.g. \
 "millwork_doors_trim" is priced PER DOOR only — never assign it to a baseboard/trim linear-\
 footage line; baseboard material is its own "item" and baseboard install labor is already \
 bundled into "flooring_install_lvp", so a baseboard line needs no "trade" of its own at all).
+- A "lump_sum" trade's rate covers that trade's ENTIRE project scope in one job (see its \
+"includes" column) — emit it as exactly ONE takeoff line for the whole project, never split \
+across several lines (e.g. don't break "electrical_rough_and_finish" into separate rough-in/\
+fixtures/life-safety lines that each carry the same trade key).
 - Quantities are for the whole project as scoped; unknowns come from comparables of \
 similar GFA (name the project code in "comparable_ref")."""
 
