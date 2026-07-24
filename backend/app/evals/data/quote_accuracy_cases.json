@@ -1,0 +1,140 @@
+[
+  {
+    "id": "qa-p11-essential-accessory-unit",
+    "project_code": "P11",
+    "slots": {
+      "scope": "legal accessory unit",
+      "gfa_sqft": 950,
+      "separate_entrance": true,
+      "bedrooms_egress": "1 bedroom, egress window being added",
+      "bathroom_rough_in": "new rough-in required (full basement apartment conversion)",
+      "kitchen": "full kitchen with quartz countertop",
+      "ceiling_height": "unknown",
+      "subfloor_condition": "concrete slab, DMX 1-Step subfloor being installed",
+      "stairs": "existing stairs, one-piece laminate finish",
+      "electrical_panel": "200A upgrade",
+      "cold_room": "yes, insulated closet under stairs",
+      "package_tier_budget": "essential, ~77k",
+      "property_location": "Colville Place, Milton, ON"
+    },
+    "actual_total_cad": 77500,
+    "exclude_project_codes": ["P11"],
+    "tolerance_pct": 5.0,
+    "notes": "Real quote total, no discount applied. Full legal-basement-apartment build: separate entrance, full kitchen, one full bathroom, 200A panel upgrade, cold room."
+  },
+  {
+    "id": "qa-p12-essential-basement",
+    "project_code": "P12",
+    "slots": {
+      "scope": "legal accessory unit",
+      "gfa_sqft": 900,
+      "separate_entrance": true,
+      "bedrooms_egress": "1 bedroom, egress window being added",
+      "bathroom_rough_in": "new rough-in required (two full bathrooms, full conversion)",
+      "kitchen": "full kitchen with quartz countertop",
+      "ceiling_height": "unknown",
+      "subfloor_condition": "unknown, standard prep assumed",
+      "stairs": "existing stairs, one-piece vinyl finish",
+      "electrical_panel": "200A upgrade",
+      "cold_room": "yes, spray foam insulated cold cellar",
+      "package_tier_budget": "essential, ~90k",
+      "property_location": "Wilton Rd, Guelph, ON"
+    },
+    "actual_total_cad": 92000,
+    "exclude_project_codes": ["P12"],
+    "tolerance_pct": 5.0,
+    "notes": "IMPORTANT CAVEAT: the real quote's pre-discount subtotal was reduced by a $13,000 'Manager's Special Approved Discount' (cash-deal, discretionary) to reach the $92,000 final total used here as actual_total_cad. Our pipeline has no way to model an ad-hoc discretionary discount, so expect the computed total to run somewhat high relative to this discounted figure -- a real, explainable gap, not a pricing-accuracy defect. Two full bathrooms (not one) -- a larger bathroom scope than P11 despite smaller GFA."
+  },
+  {
+    "id": "qa-p16-superior-basement",
+    "project_code": "P16",
+    "slots": {
+      "scope": "legal accessory unit",
+      "gfa_sqft": 1150,
+      "separate_entrance": true,
+      "bedrooms_egress": "2 bedrooms, one egress window + two regular sliding windows being added",
+      "bathroom_rough_in": "new rough-in required (two full bathrooms)",
+      "kitchen": "full kitchen with quartz countertop, waterfall island, upgraded cabinets",
+      "ceiling_height": "unknown",
+      "subfloor_condition": "concrete slab, DMX 1-Step 2.0 subfloor being installed",
+      "stairs": "existing stairs, no stair refinishing called out in scope",
+      "electrical_panel": "not called out as an upgrade in this quote -- assume adequate",
+      "cold_room": "none called out in this quote",
+      "package_tier_budget": "superior, ~120k",
+      "property_location": "Connaught Terrace, Milton, ON"
+    },
+    "actual_total_cad": 119999,
+    "exclude_project_codes": ["P16"],
+    "tolerance_pct": 5.0,
+    "notes": "IMPORTANT CAVEAT: real quote's pre-discount value was $124,950; a discount + tax deduction brought the final total to $119,999 (used here as actual_total_cad) -- a ~4% discretionary reduction our pipeline can't model, so a small upward bias in the computed total vs. this figure is expected. SUPERIOR-tier legal rental basement, two bedrooms, largest GFA of the six cases."
+  },
+  {
+    "id": "qa-p19-superior-finished-basement",
+    "project_code": "P19",
+    "slots": {
+      "scope": "finished basement",
+      "gfa_sqft": 1563,
+      "separate_entrance": false,
+      "bedrooms_egress": "egress window being added (30x30)",
+      "bathroom_rough_in": "existing rough-in nearby (one full bathroom + one powder room)",
+      "kitchen": "wet bar / kitchenette, not a full kitchen",
+      "ceiling_height": "unknown",
+      "subfloor_condition": "existing floor -- flooring/subflooring/stairs explicitly out of scope for this quote",
+      "stairs": "not in scope for this quote",
+      "electrical_panel": "no upgrade called out in this quote",
+      "cold_room": "yes, cold storage/porch being finished with tile",
+      "package_tier_budget": "superior, ~80k",
+      "property_location": "Alfred Hughes Ave, Oakville, ON"
+    },
+    "actual_total_cad": 77500,
+    "exclude_project_codes": ["P19", "S01"],
+    "tolerance_pct": 5.0,
+    "notes": "IMPORTANT CAVEAT: this real quote's own scope of work (item 12) explicitly states 'FLOORING + SUBFLOORING + STAIRS: Not in scope - TBD' and (item 13) the TV/fireplace feature wall is also 'Not in scope - TBD' -- both excluded from the $77,500 total. There is no intake slot to express 'flooring is out of scope', so our takeoff will likely still generate a flooring line per guideline SS4 defaults, inflating the computed total above actual for a structural, explainable reason -- not a pricing-accuracy defect. This is also the P19/S01 tier-delta pair documented in docs/eval-q4-synthetic-pairs.md (same property, ESSENTIAL-tier synthetic twin is S01 at $62,000) -- excluded from retrieval alongside P19 itself."
+  },
+  {
+    "id": "qa-p20-supreme-accessory-unit",
+    "project_code": "P20",
+    "slots": {
+      "scope": "legal accessory unit",
+      "gfa_sqft": 745,
+      "separate_entrance": true,
+      "bedrooms_egress": "egress windows being enlarged/added (48x42, 30x30, and 42x36 across two window sections)",
+      "bathroom_rough_in": "new rough-in required (one full bathroom, full legal-suite conversion)",
+      "kitchen": "full kitchen with quartz countertop, supreme-tier finishes",
+      "ceiling_height": "unknown",
+      "subfloor_condition": "concrete slab, DMX 1-Step 2.0 subfloor being installed",
+      "stairs": "sand & stain to match existing staircase",
+      "electrical_panel": "200A upgrade",
+      "cold_room": "none called out in this quote",
+      "package_tier_budget": "supreme, ~95k",
+      "property_location": "Pringle Ave, Milton, ON"
+    },
+    "actual_total_cad": 94950,
+    "exclude_project_codes": ["P20", "S02"],
+    "tolerance_pct": 5.0,
+    "notes": "Real quote total, no discount applied. Smallest GFA of the six cases (745 sqft) but SUPREME tier -- tests whether the pipeline correctly reflects higher per-sqft cost at smaller scale (guideline SS8's own rule of thumb: accessory unit ~$75-130/sqft, smaller GFA trends toward the higher end). Below-grade/separate entrance with multiple new/enlarged egress windows. Paired synthetic twin is S02 (SUPERIOR tier) -- excluded from retrieval alongside P20 itself."
+  },
+  {
+    "id": "qa-p21-supreme-finished-basement",
+    "project_code": "P21",
+    "slots": {
+      "scope": "finished basement",
+      "gfa_sqft": 745,
+      "separate_entrance": false,
+      "bedrooms_egress": "one egress window being added (42x36)",
+      "bathroom_rough_in": "new rough-in required (one full bathroom)",
+      "kitchen": "full kitchen with quartz countertop, supreme-tier finishes",
+      "ceiling_height": "unknown",
+      "subfloor_condition": "unknown -- tile flooring directly on existing subfloor",
+      "stairs": "sand & stain to match existing staircase",
+      "electrical_panel": "200A upgrade",
+      "cold_room": "none called out in this quote",
+      "package_tier_budget": "supreme, ~95k",
+      "property_location": "Pringle Ave, Milton, ON"
+    },
+    "actual_total_cad": 94950,
+    "exclude_project_codes": ["P21"],
+    "tolerance_pct": 5.0,
+    "notes": "Real quote total, no discount applied. Same GFA, tier, city, street, and final total as P20 despite different scope (finished basement vs. accessory unit with separate entrance) -- these are two distinct real projects, not a synthetic pair (no paired_with metadata), so no cross-exclusion with P20 in retrieval. Useful pair for demo narration: same $ total achieved via a different scope mix (no entrance/egress-window work here, but full kitchen included from the start rather than as an add-on)."
+  }
+]

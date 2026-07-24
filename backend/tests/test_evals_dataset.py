@@ -5,6 +5,8 @@ must resolve against the real chunker output over the real corpus, so the
 golden set can never drift from what ingestion actually produces.
 """
 
+from pathlib import Path
+
 import pytest
 
 from app.agent import guidelines
@@ -12,9 +14,11 @@ from app.evals.dataset import (
     RAGAS_TESTSET_PATH,
     ROUTES,
     load_agent_scenarios,
+    load_quote_accuracy_cases,
     load_ragas_testset,
     load_retrieval_golden,
 )
+from app.config import CORPUS_DIR
 from app.ingestion.chunking import chunk_doc
 from app.ingestion.loaders import load_all
 
@@ -35,6 +39,11 @@ def golden():
 @pytest.fixture(scope="module")
 def scenarios():
     return load_agent_scenarios()
+
+
+@pytest.fixture(scope="module")
+def quote_accuracy_cases():
+    return load_quote_accuracy_cases()
 
 
 def test_golden_schema(golden):
@@ -103,6 +112,45 @@ def test_q4_references_answer_key_outside_corpus(scenarios):
     q4 = next(s for s in scenarios if "tier" in s.id)
     key = q4.references.get("answer_key", "")
     assert key.startswith("docs/"), "answer key must live outside corpus/"
+
+
+def _quote_file(project_code: str) -> Path:
+    matches = list((CORPUS_DIR / "quotes-redacted").glob(f"{project_code}-*.md"))
+    matches += list((CORPUS_DIR / "quotes-synthetic").glob(f"{project_code}-*.md"))
+    assert len(matches) == 1, f"expected exactly one corpus file for {project_code}, found {matches}"
+    return matches[0]
+
+
+def test_quote_accuracy_cases_schema(quote_accuracy_cases):
+    assert len(quote_accuracy_cases) == 6
+    ids = [c.id for c in quote_accuracy_cases]
+    assert len(ids) == len(set(ids)), "duplicate case ids"
+    for c in quote_accuracy_cases:
+        assert c.project_code in c.exclude_project_codes, (
+            f"{c.id}: leave-one-out exclusion must include the case's own project_code"
+        )
+        assert c.slots, c.id
+        assert c.actual_total_cad > 0, c.id
+
+
+def test_quote_accuracy_project_codes_exist_in_corpus(quote_accuracy_cases):
+    for c in quote_accuracy_cases:
+        _quote_file(c.project_code)  # raises if missing/ambiguous
+        for excluded in c.exclude_project_codes:
+            _quote_file(excluded)
+
+
+def test_quote_accuracy_actual_total_matches_corpus_text(quote_accuracy_cases):
+    """Guards against a transcription typo in actual_total_cad: the exact
+    dollar figure (as it appears in the quote's own TOTAL line, e.g.
+    "$119,999.00") must appear verbatim somewhere in that project's corpus
+    file text."""
+    for c in quote_accuracy_cases:
+        text = _quote_file(c.project_code).read_text()
+        formatted = f"{c.actual_total_cad:,.2f}"
+        assert formatted in text, (
+            f"{c.id}: ${formatted} not found in {c.project_code}'s corpus file"
+        )
 
 
 def test_ragas_testset_rows():
