@@ -5,8 +5,8 @@
 ## Branch state
 
 - **`main`** — the graded submission. Last commit `d5f7de9`. **Do not merge into `main` until the user confirms grading is complete.**
-- **`develop`** — active capstone branch. 18 PRs merged since the submission (`#6`–`#18`, following the submission's own PR numbering). All work happens on feature branches off `develop`, one PR per change, merged only on explicit go-ahead — same workflow as the original submission.
-- Current test suite: **136 passed, 1 skipped**, no network required (`cd backend && uv run pytest`).
+- **`develop`** — active capstone branch. 19 PRs merged since the submission (`#6`–`#19`, following the submission's own PR numbering), plus PR #20 (duplicate-quote guardrails) open. All work happens on feature branches off `develop`, one PR per change, merged only on explicit go-ahead — same workflow as the original submission.
+- Current test suite: **150 passed, 1 skipped**, no network required (`cd backend && uv run pytest`).
 
 ## `submission.md` §7.2's four capstone items — status
 
@@ -16,7 +16,7 @@
 |---|---|---|---|
 | 1 | **Quote-accuracy evaluation** — leave-one-out on real projects, $ error + coverage | ✅ **Done** | `backend/app/evals/run_quote_accuracy_eval.py`, full writeup in `docs/quote-accuracy-eval.md`. 6 real projects (2 per tier), average absolute error **61.9% → 17.8%** after fixing 4 real takeoff/pricing bugs the eval surfaced, plus a data-grounded labor-rate calibration (PRs #13–#18) |
 | 2 | **Material pricing** — replace live-Tavily-only search with a price tool/data source, refreshed by a scheduled agent | 🟡 **Partially done** | Sheet-first pricing exists and is live: `app/pricing/materials.py`, `allowances.py`, `labor.py` — Tavily is now only a fallback when a sheet lookup is missing/stale (PRs #11, #13). The "separate scheduled agent that refreshes daily" from the original plan is **not built** — the CSVs are still manually maintained/edited, not auto-refreshed |
-| 3 | **Duplicate-quote guardrails** — reject/flag same email or address within a time window | ⬜ **Not started** | — |
+| 3 | **Duplicate-quote guardrails** — reject/flag same email or address within a time window | 🟡 **PR open** | `backend/app/guardrails.py`: same normalized `scope + property_location` blocks a duplicate within a configurable expiry window (default 90 days); same email/phone blocks after too many distinct properties in that window (default 3). Alert is a best-effort LangSmith tag, no new notification infra (PR #20, not yet merged) |
 | 4 | **Estimator authentication** — login + API role checks on `/quotes` | ⬜ **Not started** | — |
 
 ## Beyond §7.2 — architecture work not in the original plan
@@ -33,7 +33,6 @@ The user identified additional problems on re-reviewing the submitted architectu
 
 Nothing below has started; no work begins on any of it until the user directs it:
 
-- Duplicate-quote guardrails (§7.2 #3)
 - Estimator authentication (§7.2 #4)
 - Scheduled price-refresh agent (the unbuilt half of §7.2 #2)
 - Further quote-accuracy calibration once Company A provides real labor-rate figures (the current 50% cut is data-grounded but explicitly a placeholder — see `docs/quote-accuracy-eval.md`)
