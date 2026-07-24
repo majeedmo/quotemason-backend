@@ -237,6 +237,28 @@ def test_takeoff_node_filters_comparables_by_tier_and_validates(monkeypatch):
     assert out["retrieved"]["past_project_quote"][0]["citation"] == "Past project P19"
 
 
+def test_takeoff_node_passes_eval_exclusion_hook_when_present(monkeypatch):
+    """_eval_exclude_project_codes is an eval-only state key (see
+    run_quote_accuracy_eval.py) -- absent in every production path, so
+    None flows through unchanged there; when present it must reach
+    search_past_quotes so leave-one-out retrieval actually excludes."""
+    fake = _patch_stage_retrievers(monkeypatch)
+    takeoff_json = json.dumps({"gfa_sqft": 900, "lines": [], "assumptions": []})
+    monkeypatch.setattr(nodes, "drafting_model", lambda: _FakeStageModel(
+        SimpleNamespace(content=takeoff_json)))
+    takeoff_node({"slots": {"scope": "basement"}, "codes_checklist": {"items": []},
+                 "_eval_exclude_project_codes": ["P19", "S01"]})
+    quote_call = next(kw for n, kw in fake.calls if n == "quotes")
+    assert quote_call["exclude_project_codes"] == ["P19", "S01"]
+
+    fake2 = _patch_stage_retrievers(monkeypatch)
+    monkeypatch.setattr(nodes, "drafting_model", lambda: _FakeStageModel(
+        SimpleNamespace(content=takeoff_json)))
+    takeoff_node({"slots": {"scope": "basement"}, "codes_checklist": {"items": []}})
+    quote_call2 = next(kw for n, kw in fake2.calls if n == "quotes")
+    assert quote_call2["exclude_project_codes"] is None
+
+
 def test_takeoff_node_degrades_to_none_on_unparseable_output(monkeypatch):
     _patch_stage_retrievers(monkeypatch)
     model = _FakeStageModel(SimpleNamespace(content="no json"),
