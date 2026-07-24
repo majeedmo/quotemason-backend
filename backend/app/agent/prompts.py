@@ -151,6 +151,12 @@ ITEM KEYS whenever one fits — exact spelling; a mismatched key cannot be price
 - Never invent a "bathroom_build" lump-sum labor line AND itemize that same bathroom's \
 electrical/plumbing/tiling/drywall trade lines — pick one representation, not both, or the \
 cost double-counts.
+- A trade's labor rate has ONE fixed physical unit (per_door, per_opening, per_well, per_head, \
+per_bathroom, per_sqft_floor, per_sqft_surface, lump_sum — see its own rate-sheet unit); never \
+assign a trade whose unit doesn't match this line's own "quantity"/"unit" (e.g. \
+"millwork_doors_trim" is priced PER DOOR only — never assign it to a baseboard/trim linear-\
+footage line; baseboard material is its own "item" and baseboard install labor is already \
+bundled into "flooring_install_lvp", so a baseboard line needs no "trade" of its own at all).
 - Quantities are for the whole project as scoped; unknowns come from comparables of \
 similar GFA (name the project code in "comparable_ref")."""
 
