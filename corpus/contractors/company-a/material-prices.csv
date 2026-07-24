@@ -5,6 +5,15 @@ windows,egress_window,per_opening_cad,3500,6500,2026-05-02,sub-trade quote,concr
 drywall,drywall_sheet_12ft,per_sheet_cad,18,24,2026-07-10,supplier list,1/2in regular 4x12 material only
 insulation,batt_r22,per_sqft_cad,1.10,1.60,2026-07-10,supplier list,walls incl. vapour barrier
 paint,interior_paint,per_gallon_cad,45,75,2026-07-10,supplier list,Benjamin Moore lines per guideline
-electrical,pot_light,per_fixture_cad,18,35,2026-07-10,supplier list,4in LED slim fixture only
+electrical,pot_lights,per_fixture_cad,18,35,2026-07-10,supplier list,4in LED slim fixture only (renamed from pot_light to match material-allowances-DRAFT-v0.csv's key)
 bathroom,floor_wall_tile,per_sqft_cad,4.00,9.00,2026-07-10,supplier list,material only per allowances tiers
-doors,interior_door,per_door_cad,180,320,2026-06-15,supplier list,shaker hollow core prehung
+doors,interior,per_door_cad,180,320,2026-06-15,supplier list,shaker hollow core prehung (renamed from interior_door to match material-allowances-DRAFT-v0.csv's key)
+framing,studs_and_plates,per_linear_ft_cad,3.00,6.00,2026-07-24,web market research 2026,lumber material only (studs+plates+blocking); framing labor priced separately via labor-rates.csv
+concrete,self_leveling_bags,per_bag_cad,35,50,2026-07-24,web market research 2026,50lb bag ~0.45 cu ft coverage; guideline §4 default 2-4 bags by tier
+kitchen,faucet,per_unit_cad,150,450,2026-07-24,web market research 2026,product cost only; allowances CSV is spec-only for this item (no $); installation labor via plumbing_rough_and_finish trade
+bathroom,vanity,per_unit_cad,500,2000,2026-07-24,web market research 2026,material only; fallback for SUPERIOR/SUPREME tiers where allowances CSV is spec-only (ESSENTIAL has its own $500 allowance figure)
+bathroom,toilet,per_unit_cad,250,700,2026-07-24,web market research 2026,product cost only; allowances CSV is spec-only for this item at every tier (no $)
+bathroom,mirror,per_unit_cad,100,450,2026-07-24,web market research 2026,spans standard to LED; allowances CSV is spec-only for this item at every tier (no $)
+flooring,baseboards,per_linear_ft_cad,5.00,7.00,2026-07-24,web market research 2026,material only (installation already bundled into flooring_install_lvp labor); allowances CSV is spec-only for this item (no $)
+subfloor,dmx_panel,per_sqft_cad,3.00,5.00,2026-07-24,web market research 2026,DMX 1-Step or equivalent basement subfloor membrane; material only, installation via subfloor_dmx labor trade
+doors,hardware,per_door_cad,20,90,2026-07-24,web market research 2026,product cost only (passage knob to TAYMOR lever/lock set per door); allowances CSV is spec-only for this item at every tier (no $); installation bundled into millwork_doors_trim labor

@@ -16,7 +16,7 @@ from app.agent import guidelines, prompts, schemas
 from app.agent.llm import codes_model, drafting_model, intake_model
 from app.agent.state import AgentState
 from app.config import settings
-from app.pricing import labor, materials
+from app.pricing import allowances, labor, materials
 from app.retrieval import get_retriever
 from app.tools import regulatory
 
@@ -275,13 +275,14 @@ def takeoff_node(state: AgentState) -> dict:
         quote_q, k=6, package_tier=tier))
     item_keys = sorted(f"{c}/{i}" for c, i in materials.load_price_sheet())
     trade_keys = sorted({trade for trade, _ in labor.load_labor_rates()})
+    allowance_keys = sorted(f"{c}/{i}" for c, i in allowances.load_allowances())
     checklist_dict = state.get("codes_checklist") or {}
     takeoff = None
     try:
         msgs = [SystemMessage(prompts.takeoff_system()),
                 HumanMessage(prompts.takeoff_user(
                     s, guidelines.section("4"), comparables,
-                    checklist_dict, item_keys, trade_keys,
+                    checklist_dict, item_keys, trade_keys, allowance_keys,
                     state.get("estimator_feedback")))]
         m = drafting_model()
         resp = m.invoke(msgs)
@@ -307,18 +308,22 @@ _LABOR_LUMP_UNITS = {"lump_sum"}
 
 def price_fill_node(state: AgentState) -> dict:
     """Deterministic price resolution — no LLM. Sheet-first (staleness-gated
-    for materials, status-gated for labor), per-item web fallback when a
-    Tavily key is present, honest 'unpriced' rows otherwise. Arithmetic
-    happens here in code so the accuracy eval can assert it.
+    for materials, status-gated for labor, tier-gated for allowances),
+    per-item web fallback when a Tavily key is present, honest 'unpriced'
+    rows otherwise. Arithmetic happens here in code so the accuracy eval can
+    assert it.
 
-    A takeoff line can price against a material AND a labor rate — those
-    become two separate price_resolution rows sharing takeoff_line_ref,
-    never a blended number, so each dollar's source stays independently
-    auditable."""
+    A takeoff line can price against a material, a labor rate, AND a tier
+    allowance — each becomes its own price_resolution row sharing
+    takeoff_line_ref, never a blended number, so each dollar's source stays
+    independently auditable. A spec-only allowance cell at the project's
+    tier (no $ figure) falls back to the material sheet under the same
+    (category, item) key rather than going straight to unpriced."""
     takeoff = state.get("takeoff") or {}
     lines = takeoff.get("lines") or []
     gfa_sqft = takeoff.get("gfa_sqft")
     gfa_band = labor.job_size_band(gfa_sqft)
+    tier = _tier(state.get("slots", {}))
     rows: list[dict] = []
     tavily_client = None
     tavily_used = 0
@@ -346,10 +351,41 @@ def price_fill_node(state: AgentState) -> dict:
                            else " and TAVILY_API_KEY not set")
                         + " — estimator to price")}
 
+    def _price_material(cat: str, item: str, qty: float, base: dict, desc: str) -> dict:
+        """(category, item) against the material price sheet; Tavily
+        fallback if missing/stale. Shared by the "item" branch and the
+        allowance-fallback path (a spec-only tier cell falls back to the
+        material sheet under the same key)."""
+        sheet_row = materials.lookup(cat, item)
+        if sheet_row and not materials.is_stale(sheet_row):
+            quoted = materials.quoted_price(sheet_row)
+            return {**base, "item": item,
+                   "unit_price_low_cad": sheet_row.price_low_cad,
+                   "unit_price_high_cad": sheet_row.price_high_cad,
+                   "unit_price_quoted_cad": quoted,
+                   "extended_low_cad": round(qty * sheet_row.price_low_cad, 2),
+                   "extended_high_cad": round(qty * sheet_row.price_high_cad, 2),
+                   "extended_quoted_cad": round(qty * quoted, 2),
+                   "sheet_unit": sheet_row.unit,
+                   "price_source": "price_sheet",
+                   "source_detail": (f"{sheet_row.source} (updated "
+                                     f"{sheet_row.updated_at.isoformat()})"),
+                   "stale": False}
+        status = "stale" if sheet_row else "missing"
+        return _tavily_fallback({**base, "item": item}, desc or item, status)
+
+    def _bare_key(key: str) -> str:
+        """The takeoff model sometimes echoes the full "category/item" pair
+        from the prompt's key lists into item/allowance_item instead of
+        splitting it (observed live) — tolerate it rather than let every
+        lookup silently miss."""
+        return key.rsplit("/", 1)[-1] if "/" in key else key
+
     for line in lines:
         cat = str(line.get("category", ""))
-        item = str(line.get("item", "") or "")
+        item = _bare_key(str(line.get("item", "") or ""))
         trade = str(line.get("trade", "") or "")
+        allowance_item = _bare_key(str(line.get("allowance_item", "") or ""))
         qty = float(line.get("quantity") or 0)
         unit = line.get("unit", "")
         desc = line.get("description", "")
@@ -359,24 +395,28 @@ def price_fill_node(state: AgentState) -> dict:
         priced_anything = False
         if item:
             priced_anything = True
-            sheet_row = materials.lookup(cat, item)
-            if sheet_row and not materials.is_stale(sheet_row):
-                quoted = materials.quoted_price(sheet_row)
-                rows.append({**base, "item": item,
-                            "unit_price_low_cad": sheet_row.price_low_cad,
-                            "unit_price_high_cad": sheet_row.price_high_cad,
-                            "unit_price_quoted_cad": quoted,
-                            "extended_low_cad": round(qty * sheet_row.price_low_cad, 2),
-                            "extended_high_cad": round(qty * sheet_row.price_high_cad, 2),
-                            "extended_quoted_cad": round(qty * quoted, 2),
-                            "sheet_unit": sheet_row.unit,
-                            "price_source": "price_sheet",
-                            "source_detail": (f"{sheet_row.source} (updated "
-                                              f"{sheet_row.updated_at.isoformat()})"),
-                            "stale": False})
+            rows.append(_price_material(cat, item, qty, base, desc))
+
+        if allowance_item:
+            priced_anything = True
+            arow = allowances.lookup(cat, allowance_item)
+            tier_quoted = allowances.quoted_value(arow, tier) if arow else None
+            if arow and tier_quoted is not None:
+                lo, hi = allowances.tier_range(arow, tier)
+                rows.append({**base, "allowance_item": allowance_item,
+                            "unit_price_low_cad": lo, "unit_price_high_cad": hi,
+                            "unit_price_quoted_cad": round(tier_quoted, 2),
+                            "extended_low_cad": round(qty * lo, 2),
+                            "extended_high_cad": round(qty * hi, 2),
+                            "extended_quoted_cad": round(qty * tier_quoted, 2),
+                            "sheet_unit": arow.unit,
+                            "price_source": "allowance",
+                            "source_detail": f"{arow.source} ({tier or 'unknown'} tier)"})
             else:
-                status = "stale" if sheet_row else "missing"
-                rows.append(_tavily_fallback({**base, "item": item}, desc or item, status))
+                # spec-only cell at this tier (or no allowance row at all) --
+                # fall back to the material sheet under the same key
+                rows.append({**_price_material(cat, allowance_item, qty, base, desc),
+                            "allowance_item": allowance_item})
 
         if trade:
             priced_anything = True

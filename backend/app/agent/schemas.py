@@ -39,8 +39,9 @@ class CodesChecklist(BaseModel):
 class TakeoffLine(BaseModel):
     id: str = ""                         # assigned in code after validation
     category: str                        # work-category / price-sheet vocabulary
-    item: str = ""                       # price-sheet/allowances key where possible ("lvp")
+    item: str = ""                       # material-prices.csv key where possible ("lvp")
     trade: str = ""                      # labor-rates.csv trade key, parallel to item
+    allowance_item: str = ""             # material-allowances.csv key for tier-differentiated finishes
     description: str = ""
     quantity: float
     unit: str                            # sqft | linear_ft | each | sheet | gallon | lump_sum

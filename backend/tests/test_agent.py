@@ -246,8 +246,9 @@ def test_takeoff_node_degrades_to_none_on_unparseable_output(monkeypatch):
     assert out["takeoff"] is None
 
 
-def _takeoff_state(*lines, gfa_sqft=None):
-    return {"takeoff": {"lines": list(lines), "gfa_sqft": gfa_sqft}}
+def _takeoff_state(*lines, gfa_sqft=None, slots=None):
+    return {"takeoff": {"lines": list(lines), "gfa_sqft": gfa_sqft},
+            "slots": slots or {}}
 
 
 def test_price_fill_prices_fresh_sheet_rows_with_arithmetic(monkeypatch):
@@ -427,6 +428,87 @@ def test_price_fill_neither_item_nor_trade_is_unpriced(monkeypatch):
     row = out["price_resolution"][0]
     assert row["price_source"] == "unpriced"
     assert "no material or labor key" in row["note"]
+
+
+def _allowance_row(**overrides):
+    from app.pricing.allowances import AllowanceRow
+    defaults = dict(category="kitchen", item="quartz_countertop", unit="per_sqft_cad",
+                    essential="30", superior="45", supreme="45", status="GROUNDED",
+                    source="real quotes 2026")
+    return AllowanceRow(**{**defaults, **overrides})
+
+
+def test_price_fill_allowance_hit_resolves_by_project_tier(monkeypatch):
+    monkeypatch.setattr(nodes.settings, "tavily_api_key", "")
+    monkeypatch.setattr(nodes.allowances, "lookup", lambda c, i: _allowance_row())
+    out = price_fill_node(_takeoff_state(
+        {"id": "t1", "category": "kitchen", "allowance_item": "quartz_countertop",
+         "quantity": 40, "unit": "sqft"},
+        slots={"package_tier_budget": "superior, ~90k"}))
+    row = out["price_resolution"][0]
+    assert row["price_source"] == "allowance"
+    assert row["unit_price_quoted_cad"] == 45.0
+    assert row["extended_quoted_cad"] == 1800.0
+    assert row["source_detail"] == "real quotes 2026 (SUPERIOR tier)"
+
+
+def test_price_fill_allowance_spec_only_tier_falls_back_to_material_sheet(monkeypatch):
+    """vanity: ESSENTIAL has a real $ figure, SUPERIOR/SUPREME are spec-only
+    in the allowances CSV — must fall back to the material sheet, not go
+    straight to unpriced."""
+    monkeypatch.setattr(nodes.settings, "tavily_api_key", "")
+    monkeypatch.setattr(nodes.allowances, "lookup", lambda c, i: _allowance_row(
+        category="bathroom", item="vanity", unit="per_unit_cad",
+        essential="500", superior="floating + quartz top", supreme="floating + sconces"))
+
+    class _FakeMaterialRow:
+        price_low_cad, price_high_cad, unit, source = 500.0, 2000.0, "per_unit_cad", "web market research 2026"
+        updated_at = __import__("datetime").date(2026, 7, 24)
+    monkeypatch.setattr(nodes.materials, "lookup", lambda c, i: _FakeMaterialRow())
+
+    out = price_fill_node(_takeoff_state(
+        {"id": "t1", "category": "bathroom", "allowance_item": "vanity",
+         "quantity": 1, "unit": "each"},
+        slots={"package_tier_budget": "superior, ~90k"}))
+    row = out["price_resolution"][0]
+    assert row["price_source"] == "price_sheet"  # fell back, not "allowance"
+    assert row["allowance_item"] == "vanity"
+    assert row["item"] == "vanity"
+    assert row["unit_price_quoted_cad"] == 1250.0  # midpoint of the material sheet fallback
+
+
+def test_price_fill_tolerates_model_echoing_category_slash_item(monkeypatch):
+    """Observed live: the takeoff model sometimes puts the full "category/item"
+    pair (copied from the prompt's key list) into item/allowance_item instead
+    of splitting it. price_fill must still resolve the lookup correctly --
+    verified here by recording exactly what key each lookup was called with."""
+    monkeypatch.setattr(nodes.settings, "tavily_api_key", "")
+    material_calls, allowance_calls = [], []
+    monkeypatch.setattr(nodes.materials, "lookup",
+                        lambda c, i: material_calls.append((c, i)) or None)
+    monkeypatch.setattr(nodes.allowances, "lookup",
+                        lambda c, i: allowance_calls.append((c, i)) or _allowance_row())
+    price_fill_node(_takeoff_state(
+        {"id": "t1", "category": "flooring", "item": "flooring/lvp",
+         "quantity": 100, "unit": "sqft"},
+        {"id": "t2", "category": "kitchen", "allowance_item": "kitchen/quartz_countertop",
+         "quantity": 40, "unit": "sqft"},
+        slots={"package_tier_budget": "superior, ~90k"}))
+    assert material_calls == [("flooring", "lvp")]
+    assert allowance_calls == [("kitchen", "quartz_countertop")]
+
+
+def test_price_fill_allowance_missing_row_falls_back_and_can_still_be_unpriced(monkeypatch):
+    monkeypatch.setattr(nodes.settings, "tavily_api_key", "")
+    monkeypatch.setattr(nodes.allowances, "lookup", lambda c, i: None)
+    monkeypatch.setattr(nodes.materials, "lookup", lambda c, i: None)
+    out = price_fill_node(_takeoff_state(
+        {"id": "t1", "category": "bathroom", "allowance_item": "nonexistent",
+         "quantity": 1, "unit": "each"},
+        slots={"package_tier_budget": "essential, ~50k"}))
+    row = out["price_resolution"][0]
+    assert row["price_source"] == "unpriced"
+    assert row["allowance_item"] == "nonexistent"
 
 
 # --- traceability: code_item -> takeoff line -> price_resolution row --------

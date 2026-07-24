@@ -120,8 +120,9 @@ Respond with a single JSON object and NOTHING else — no prose, no code fences:
   "gfa_sqft": <number|null>,
   "lines": [{{
     "category": "<work category, price-sheet vocabulary where possible>",
-    "item": "<price-sheet/allowances key where possible, e.g. "lvp", else empty>",
+    "item": "<material price-sheet key where possible, e.g. "lvp", else empty>",
     "trade": "<labor-rate key where the work needs installed labor, e.g. "framing", else empty>",
+    "allowance_item": "<tier-allowance key for a finish choice, e.g. "quartz_countertop", else empty>",
     "description": "<short human description>",
     "quantity": <number>,
     "unit": "sqft" | "linear_ft" | "each" | "sheet" | "gallon" | "lump_sum",
@@ -139,11 +140,14 @@ Rules:
 source "assumption" and state it in "assumptions".
 - Every codes-checklist item with "action": "line_item" MUST appear as a takeoff line \
 (source "code_item", "code_item_ref" set to that item's "id" — copy it exactly, never invent one).
-- A line may set "item" (a material), "trade" (installed labor), both, or neither — set \
-whichever actually applies; many lines need both (e.g. LVP flooring has a material cost \
-AND an install-labor cost, priced separately downstream).
-- Use the KNOWN PRICE/ALLOWANCE ITEM KEYS and KNOWN LABOR TRADE KEYS whenever one fits — \
-exact spelling; a mismatched key cannot be priced downstream.
+- A line may set "item" (a material), "trade" (installed labor), "allowance_item" (a \
+tier-differentiated finish), any combination, or none — set whichever actually applies. \
+Many lines need both "item" and "trade" (e.g. LVP flooring has a material cost AND an \
+install-labor cost, priced separately downstream). Use "allowance_item" for finish choices \
+that vary by package tier (cabinets, countertops, tile, fixtures, hardware) — try it FIRST \
+for those; "item" is for structural/generic materials with one market price regardless of tier.
+- Use the KNOWN MATERIAL PRICE-SHEET ITEM KEYS, KNOWN LABOR TRADE KEYS, and KNOWN ALLOWANCE \
+ITEM KEYS whenever one fits — exact spelling; a mismatched key cannot be priced downstream.
 - Never invent a "bathroom_build" lump-sum labor line AND itemize that same bathroom's \
 electrical/plumbing/tiling/drywall trade lines — pick one representation, not both, or the \
 cost double-counts.
@@ -156,15 +160,17 @@ def takeoff_system() -> str:
 
 
 def takeoff_user(slots: dict, section_4: str, comparables: list, codes_checklist: dict,
-                 item_keys: list[str], trade_keys: list[str],
+                 item_keys: list[str], trade_keys: list[str], allowance_keys: list[str],
                  feedback: str | None = None) -> str:
     comp = "\n\n".join(f"--- {c['citation']}\n{c['text']}" for c in comparables)
     parts = [f"INTAKE SLOTS:\n{json.dumps(slots, indent=2)}",
              f"=== GUIDELINE §4 — MATERIAL CALCULATION RULES OF THUMB ===\n{section_4}",
              f"APPLICABLE CODES CHECKLIST (stage 1 — items have \"id\"s to reference):\n"
              f"{json.dumps(codes_checklist, indent=2)}",
-             f"KNOWN PRICE/ALLOWANCE ITEM KEYS (category/item):\n{', '.join(item_keys)}",
+             f"KNOWN MATERIAL PRICE-SHEET ITEM KEYS (category/item):\n{', '.join(item_keys)}",
              f"KNOWN LABOR TRADE KEYS (trade):\n{', '.join(trade_keys)}",
+             f"KNOWN ALLOWANCE ITEM KEYS (category/item, tier-differentiated finishes):\n"
+             f"{', '.join(allowance_keys)}",
              f"COMPARABLE PAST PROJECTS:\n{comp or '(none retrieved)'}"]
     if feedback:
         parts.append("ESTIMATOR REVISION REQUEST (apply scope/quantity changes):\n"
@@ -184,13 +190,14 @@ never fabricate one.
 never silently invent or drop a quantity; if you must deviate, state the deviation and why \
 under Assumptions. Every codes-checklist "line_item" appears as a work line.
 - Priced lines use the PRICE RESOLUTION rows where present (source shown inline: price \
-sheet with its updated date, labor rate, or web price check). A takeoff line can produce TWO \
-rows (material + labor) — show both, don't merge them into one number. For each row, quote \
-its "extended_quoted_cad" as the line's dollar amount — never average, split the difference, \
-or otherwise re-derive a number from "extended_low_cad"/"extended_high_cad" yourself; those \
-two are the underlying range for the estimator's reference, already collapsed into the \
-quoted figure by the pricing rules, not a second number to present or reconcile. Rows marked \
-"unpriced" are quoted as "estimator to price" with the row's note.
+sheet with its updated date, tier allowance, labor rate, or web price check). A takeoff line \
+can produce more than one row (material + labor + allowance) — show each, don't merge them \
+into one number. For each row, quote its "extended_quoted_cad" as the line's dollar amount — \
+never average, split the difference, or otherwise re-derive a number from \
+"extended_low_cad"/"extended_high_cad" yourself; those two are the underlying range for the \
+estimator's reference, already collapsed into the quoted figure by the pricing rules, not a \
+second number to present or reconcile. Rows marked "unpriced" are quoted as "estimator to \
+price" with the row's note.
 - Every code-driven line item carries its OBC/zoning citation exactly as given in the \
 context (§5.15). Every priced line must show its source inline — a comparable project code, a \
 tier allowance, a price-sheet/labor-rate result, or a price-check — OR be quoted as "estimator \
@@ -235,8 +242,8 @@ def draft_user(slots: dict, flags: list, retrieved: dict, codes_checklist: dict 
             f"{json.dumps(codes_checklist, indent=2)}\n\n"
             f"MATERIAL TAKEOFF (stage 2 — quantity source of truth):\n"
             f"{json.dumps(takeoff, indent=2)}\n\n"
-            f"PRICE RESOLUTION (contractor price sheet + labor rates; web "
-            f"fallback for missing/stale items):\n"
+            f"PRICE RESOLUTION (contractor price sheet + labor rates + tier "
+            f"allowances; web fallback for missing/stale items):\n"
             f"{json.dumps(price_resolution, indent=2)}\n\n"
             f"RETRIEVED CONTEXT ({sum(len(v) for v in retrieved.values())} chunks):\n"
             + "\n\n".join(ctx))
