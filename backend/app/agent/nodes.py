@@ -326,6 +326,7 @@ def price_fill_node(state: AgentState) -> dict:
     gfa_band = labor.job_size_band(gfa_sqft)
     tier = _tier(state.get("slots", {}))
     rows: list[dict] = []
+    charged_lump_trades: set[str] = set()
     tavily_client = None
     tavily_used = 0
 
@@ -435,17 +436,32 @@ def price_fill_node(state: AgentState) -> dict:
                 ext_low = labor_row.rate_low_cad if is_lump else round(qty * labor_row.rate_low_cad, 2)
                 ext_high = labor_row.rate_high_cad if is_lump else round(qty * labor_row.rate_high_cad, 2)
                 ext_quoted = quoted if is_lump else round(qty * quoted, 2)
-                rows.append({**base, "trade": trade,
-                            "unit_price_low_cad": labor_row.rate_low_cad,
-                            "unit_price_high_cad": labor_row.rate_high_cad,
-                            "unit_price_quoted_cad": round(quoted, 2),
-                            "extended_low_cad": ext_low, "extended_high_cad": ext_high,
-                            "extended_quoted_cad": round(ext_quoted, 2),
-                            "sheet_unit": labor_row.unit,
-                            "price_source": "labor_rate",
-                            "source_detail": f"{labor_row.includes} ({labor_row.job_size_band})",
-                            "rate_unverified": labor.is_rate_unverified(labor_row),
-                            "site_dependent": labor.is_site_dependent(labor_row)})
+                row = {**base, "trade": trade,
+                      "unit_price_low_cad": labor_row.rate_low_cad,
+                      "unit_price_high_cad": labor_row.rate_high_cad,
+                      "unit_price_quoted_cad": round(quoted, 2),
+                      "extended_low_cad": ext_low, "extended_high_cad": ext_high,
+                      "extended_quoted_cad": round(ext_quoted, 2),
+                      "sheet_unit": labor_row.unit,
+                      "price_source": "labor_rate",
+                      "source_detail": f"{labor_row.includes} ({labor_row.job_size_band})",
+                      "rate_unverified": labor.is_rate_unverified(labor_row),
+                      "site_dependent": labor.is_site_dependent(labor_row)}
+                if is_lump:
+                    # A lump-sum trade's rate already covers that trade's whole
+                    # project scope (see its "includes" column) -- if the
+                    # takeoff split that scope across multiple lines, only the
+                    # first charges the lump sum; later lines are the same job,
+                    # not additional cost.
+                    if trade in charged_lump_trades:
+                        row = {**row, "extended_low_cad": 0, "extended_high_cad": 0,
+                              "extended_quoted_cad": 0,
+                              "note": (f"lump-sum '{trade}' already charged on an earlier "
+                                       "takeoff line — this line's labor is part of that "
+                                       "same job, not billed again")}
+                    else:
+                        charged_lump_trades.add(trade)
+                rows.append(row)
 
         if not priced_anything:
             rows.append({**base, "price_source": "unpriced", "sheet_status": "missing",

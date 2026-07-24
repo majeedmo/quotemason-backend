@@ -394,6 +394,46 @@ def test_price_fill_labor_lump_sum_ignores_quantity(monkeypatch):
     assert row["extended_low_cad"] == 1500 and row["extended_high_cad"] == 3500
 
 
+def test_price_fill_lump_sum_trade_charged_once_across_multiple_lines(monkeypatch):
+    """A lump-sum trade's rate already covers that trade's whole scope (see
+    its "includes" column) -- if the takeoff splits that scope across
+    several lines (observed live: electrical_rough_and_finish split 4 ways),
+    only the first should charge the lump sum; the rest are the same job,
+    not additional cost."""
+    monkeypatch.setattr(nodes.settings, "tavily_api_key", "")
+    monkeypatch.setattr(nodes.labor, "lookup", lambda t, b: _labor_row(
+        trade="electrical_rough_and_finish", unit="lump_sum",
+        rate_low_cad=6000, rate_high_cad=10000))
+    out = price_fill_node(_takeoff_state(
+        {"id": "t1", "category": "electrical", "trade": "electrical_rough_and_finish",
+         "quantity": 1, "unit": "lump_sum"},
+        {"id": "t2", "category": "life_safety", "trade": "electrical_rough_and_finish",
+         "quantity": 3, "unit": "each"},
+        {"id": "t3", "category": "life_safety", "trade": "electrical_rough_and_finish",
+         "quantity": 1, "unit": "lump_sum"}))
+    rows = out["price_resolution"]
+    assert rows[0]["extended_quoted_cad"] == 8000.0  # first line charges the lump sum
+    for dup in rows[1:]:
+        assert dup["extended_quoted_cad"] == 0
+        assert dup["extended_low_cad"] == 0 and dup["extended_high_cad"] == 0
+        assert dup["price_source"] == "labor_rate"  # still traceable, not "unpriced"
+        assert "already charged" in dup["note"]
+
+
+def test_price_fill_lump_sum_dedup_is_per_trade_not_global(monkeypatch):
+    monkeypatch.setattr(nodes.settings, "tavily_api_key", "")
+    monkeypatch.setattr(nodes.labor, "lookup", lambda t, b: _labor_row(
+        trade=t, unit="lump_sum", rate_low_cad=3000, rate_high_cad=6000))
+    out = price_fill_node(_takeoff_state(
+        {"id": "t1", "category": "electrical", "trade": "electrical_rough_and_finish",
+         "quantity": 1, "unit": "lump_sum"},
+        {"id": "t2", "category": "hvac", "trade": "hvac_rough_and_finish",
+         "quantity": 1, "unit": "lump_sum"}))
+    rows = out["price_resolution"]
+    assert all(r["extended_quoted_cad"] == 4500.0 for r in rows), (
+        "different lump-sum trades must each be charged independently")
+
+
 def test_price_fill_labor_missing_trade_is_unpriced(monkeypatch):
     monkeypatch.setattr(nodes.settings, "tavily_api_key", "")
     monkeypatch.setattr(nodes.labor, "lookup", lambda t, b: None)

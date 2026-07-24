@@ -78,6 +78,7 @@ def upsert(chunks: list[Chunk], recreate: bool = False) -> None:
         "package_tier": PayloadSchemaType.KEYWORD,
         "scope": PayloadSchemaType.KEYWORD,
         "synthetic": PayloadSchemaType.BOOL,
+        "project_code": PayloadSchemaType.KEYWORD,
     }
     for field, schema in filter_fields.items():
         client.create_payload_index(
