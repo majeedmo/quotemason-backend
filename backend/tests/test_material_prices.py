@@ -73,6 +73,28 @@ def test_lookup_reads_committed_repo_sheet():
         materials._sheet.cache_clear()
 
 
+def test_lookup_falls_back_to_unambiguous_item_when_category_wrong(tmp_path, monkeypatch):
+    """Regression: quote #22 (2026-07-25) silently dropped ~$2,700 of paint
+    material because the takeoff model wrote category "painting" instead of
+    the sheet's "paint" — the item name ("interior_paint") was right, only
+    the category was off. An unambiguous item-name match must still price."""
+    p = _write(tmp_path, "paint,interior_paint,per_gallon_cad,45,75,2026-07-10,x,\n")
+    monkeypatch.setattr(materials, "_sheet", lambda: load_price_sheet(p))
+    row = lookup("painting", "interior_paint")
+    assert row is not None
+    assert row.category == "paint"
+
+
+def test_lookup_item_fallback_is_skipped_when_ambiguous(tmp_path, monkeypatch):
+    """Two categories sharing an item name must not silently pick one --
+    ambiguous item-only matches stay None rather than guessing wrong."""
+    p = _write(tmp_path,
+               "paint,finish,per_gallon_cad,45,75,2026-07-10,x,\n"
+               "stairs,finish,lump_sum,500,900,2026-07-10,x,\n")
+    monkeypatch.setattr(materials, "_sheet", lambda: load_price_sheet(p))
+    assert lookup("flooring", "finish") is None
+
+
 def test_quoted_price_is_always_the_midpoint():
     """Materials carry no job-size axis (unlike labor rates) — always the
     midpoint, regardless of how large the project is."""

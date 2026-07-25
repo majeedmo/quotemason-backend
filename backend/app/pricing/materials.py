@@ -76,8 +76,20 @@ def _sheet() -> dict[tuple[str, str], PriceRow]:
 
 
 def lookup(category: str, item: str) -> PriceRow | None:
-    """Current price row for (category, item), or None if not on the sheet."""
-    return _sheet().get((category.strip(), item.strip()))
+    """Current price row for (category, item), or None if not on the sheet.
+
+    Falls back to an item-only match when the exact pair misses but the item
+    name is unambiguous on the sheet — the takeoff model sometimes writes a
+    close-but-wrong category for an item it copied correctly (e.g. "painting"
+    for the sheet's "paint", live 2026-07-25), and losing a whole line's
+    material price to that is worse than trusting an unambiguous item name."""
+    sheet = _sheet()
+    row = sheet.get((category.strip(), item.strip()))
+    if row is not None:
+        return row
+    item = item.strip()
+    matches = [r for (_, i), r in sheet.items() if i == item]
+    return matches[0] if len(matches) == 1 else None
 
 
 def is_stale(row: PriceRow, threshold_days: int | None = None,
