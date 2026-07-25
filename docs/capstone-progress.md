@@ -141,6 +141,31 @@ unreliable, and the extra cost savings beyond that branch aren't worth trading a
 most of the accuracy gain that branch already secured. Reverted; not merged, not
 carried forward as an open question.
 
+## Cost investigation, round 3: GLM-5.2 on takeoff AND draft (2026-07-25, abandoned)
+
+One more variant, on a limited 3-case sample (one per tier — P11/essential, P16/superior,
+P20/supreme) rather than the full 6, since the direction was already looking bad:
+GLM-5.2 for *both* `takeoff` and `draft` (intake/codes still Haiku). Run case-by-case
+(not the full-suite batch) specifically to contain the risk of another multi-hour hang.
+
+- **P11: +44.2% error, 93% coverage** — worse than every other configuration tested
+  so far (baseline 15.6%, Haiku-takeoff 11.7%, GLM-draft-only 19.7% average; this
+  single case alone beats all of those averages in the wrong direction). Takeoff
+  itself also got noticeably slower and more verbose on GLM (33,752 completion
+  tokens, ~9 min for one call — more verbose than Sonnet's takeoff ever was).
+- **P16: hung on the `takeoff` call itself** (not just draft this time) — zero
+  response for 62+ minutes, no error, killed manually. Retried once; abandoned before
+  the retry finished once P11's number came back as clearly the worst result of the
+  whole investigation — no point spending more to confirm a direction that's already
+  this one-sided.
+- P20 not run.
+
+**Abandoned, not adopted.** Putting GLM-5.2 on *both* stages compounds both failure
+modes seen separately above (worse accuracy, and the unreliable-hang behavior) rather
+than averaging them out. This closes out the GLM-5.2 line of investigation — Haiku
+takeoff + Sonnet draft (two sections up) remains the only configuration that beat the
+original baseline on accuracy.
+
 ## What's left
 
 Nothing below has started; no work begins on any of it until the user directs it:

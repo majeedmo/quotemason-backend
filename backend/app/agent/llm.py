@@ -39,17 +39,16 @@ def codes_model() -> ChatOpenAI:
 
 
 def drafting_model() -> ChatOpenAI:
-    """Cost experiment 2026-07-25: draft stage temporarily on GLM-5.2 instead
-    of settings.drafting_model (claude-sonnet-5) -- intake/codes/takeoff stay
-    on Haiku (see takeoff_model()). Validate against the quote-accuracy eval
-    before trusting this (see docs/capstone-progress.md)."""
+    """Cost experiment 2026-07-25: draft stage on GLM-5.2 instead of
+    settings.drafting_model (claude-sonnet-5) -- intake/codes stay on Haiku,
+    takeoff also on GLM-5.2 (see takeoff_model()). Validate against the
+    quote-accuracy eval before trusting this (see docs/capstone-progress.md)."""
     return _chat("z-ai/glm-5.2", "drafting", temperature=0.3)
 
 
 def takeoff_model() -> ChatOpenAI:
-    """Cost experiment 2026-07-25: cheaper model (same tier as intake/codes)
-    for the takeoff stage only -- structured quantity extraction, arguably
-    not requiring the top-tier model draft_node's client-facing prose does.
+    """Cost experiment 2026-07-25: GLM-5.2 on takeoff too (matching the
+    drafting_model() experiment above) -- intake/codes stay on Haiku.
     Validated against the quote-accuracy eval before trusting it (see
-    docs/capstone-progress.md); draft stays on drafting_model regardless."""
-    return _chat(settings.intake_model, "takeoff", temperature=0.1)
+    docs/capstone-progress.md)."""
+    return _chat("z-ai/glm-5.2", "takeoff", temperature=0.1)
