@@ -66,6 +66,50 @@ The user identified additional problems on re-reviewing the submitted architectu
   for the takeoff model echoing `"category/item"` into the item field).
   Regression tests in `test_material_prices.py`.
 
+## Cost investigation: LLM spend per quote (2026-07-25)
+
+Quote #22 cost **~$0.74 USD in LLM spend** (OpenRouter live pricing × actual LangSmith
+token counts), ~87% of it the `takeoff`+`draft` Sonnet-5 calls. Three cost-reduction
+ideas were tested via before/after runs against the real quote-accuracy eval cases
+(the harness's own check against real historical project totals):
+
+| Approach | Total LLM cost | Accuracy (single case, P11) | Accuracy (full 6-case suite, avg \|error\|) |
+|---|---|---|---|
+| Baseline (original prompts/models) | $0.75 (P11) / ~$0.70/quote (6-case avg) | -0.4% ✓ | **15.6%**, 3/6 within ±5% |
+| Prompt-tightened ("be economical" instructions) | $0.83 (worse) | +11.1% ✗ | not tested at full-suite scale — reverted on the single-case result alone |
+| Reasoning effort lowered (drafting model) | $0.39 (48% cheaper) | +23.1% ✗ (worse) | not tested at full-suite scale — reverted on the single-case result alone |
+| **Cheaper model for `takeoff` only** (`claude-haiku-4.5` instead of `claude-sonnet-5`; `draft` unchanged) | **~$0.49/quote (6-case avg, ~30% cheaper)** | n/a | **11.7%**, 2/6 within ±5% |
+
+The first two were reverted outright — same or worse cost *and* worse accuracy, no
+trade-off to weigh. **The cheaper-takeoff-model result is different and genuinely
+mixed, not a clean win or loss:** ~30% cheaper and a *lower* average absolute error
+across all 6 real projects (11.7% vs 15.6%), but 2/6 cases land within the strict
+±5% tolerance band instead of 3/6, and average takeoff-line coverage is a couple
+points lower (93.2% vs 95.5%). The lower average error is pulled down by fixing one
+case the baseline is bad at (P19: baseline +46.0% / +32.8% on two separate runs vs
+cheap-takeoff +17.6%) at the cost of being worse on others (P16: -5.0% vs -18.0%).
+
+Also surfaced during this investigation: **`app/agent/llm.py`'s OpenRouter clients have
+no request timeout.** The baseline full-suite validation run hung for ~8.5 real hours
+on a single `takeoff` call (case P21) that started, got zero response, and never
+errored — confirmed via `ps` (process alive, ~16s total CPU time over 8h45m) and
+LangSmith (`end_time: None` on that run). Cases before it in the run had already
+completed successfully and were recovered from LangSmith traces (re-run through the
+real `price_fill_node` to reconstruct their computed totals) rather than re-spending
+on a second full 6-case run — only the missing 6th case was re-run standalone. This
+is the same timeout gap noted in "Known characteristics" above, now confirmed as a
+real (not just theoretical) failure mode.
+
+**Status: implemented on this branch (`app/agent/nodes.py` takeoff_node now calls a
+new `takeoff_model()` factory instead of `drafting_model()`), tests updated, but NOT
+merged.** This is a real accuracy/cost trade-off on the system's core value
+proposition (quote accuracy) — a judgment call for the user, not something to
+auto-ship on a favorable-looking average. Needs a decision: keep on Sonnet for
+takeoff, adopt the cheaper model, or investigate further (e.g. more repeated runs per
+case — LLM sampling noise is large enough here, per the single-case P11 numbers
+swinging from -0.4% to +23% run-to-run at temperature 0.3, that a single 6-case pass
+per condition is suggestive, not conclusive).
+
 ## What's left
 
 Nothing below has started; no work begins on any of it until the user directs it:
@@ -73,3 +117,5 @@ Nothing below has started; no work begins on any of it until the user directs it
 - Estimator authentication (§7.2 #4)
 - Scheduled price-refresh agent (the unbuilt half of §7.2 #2)
 - Further quote-accuracy calibration once Company A provides real labor-rate figures (the current 50% cut is data-grounded but explicitly a placeholder — see `docs/quote-accuracy-eval.md`)
+- Decide on the cheaper-takeoff-model branch above (merge, keep as Sonnet, or run more repetitions first)
+- Add a request timeout (+ retry/fallback) to `app/agent/llm.py`'s OpenRouter clients — confirmed live 2026-07-25, not just theoretical: a hung call currently waits forever instead of failing over
