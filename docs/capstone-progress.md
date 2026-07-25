@@ -110,6 +110,37 @@ case — LLM sampling noise is large enough here, per the single-case P11 number
 swinging from -0.4% to +23% run-to-run at temperature 0.3, that a single 6-case pass
 per condition is suggestive, not conclusive).
 
+## Cost investigation, round 2: GLM-5.2 for the draft stage (2026-07-25, NOT adopted)
+
+Follow-up to the takeoff-model experiment above: with `takeoff` already on
+`claude-haiku-4.5`, tested swapping `draft` from `claude-sonnet-5` to `z-ai/glm-5.2`
+(intake/codes/takeoff unchanged, still Haiku). Validated the same way — full 6-case
+quote-accuracy suite, real historical totals:
+
+| Configuration | Cost/quote (6-case avg) | Avg absolute error | Within ±5% tolerance | Avg coverage |
+|---|---|---|---|---|
+| Baseline (Sonnet takeoff + Sonnet draft) | ~$0.70 | 15.6% | 3/6 | 95.5% |
+| Haiku takeoff + Sonnet draft (branch above) | ~$0.49 | **11.7% (best)** | 2/6 | 93.2% |
+| Haiku everywhere + **GLM-5.2 draft** | **$0.18 (cheapest)** | **19.7% (worst)** | **1/6 (worst)** | 96.8% |
+
+**Not adopted.** GLM-5.2 is far cheaper (~4x cheaper than baseline) but produced the
+worst accuracy of all three configurations tested — worse than doing nothing. It also
+reproduced the exact hang failure mode documented above for Sonnet: during the full
+6-case validation run, the GLM-5.2 draft call for case P16 started, returned zero
+response, and never errored for 9+ minutes (P11's and P12's GLM draft calls *did*
+complete, taking 5.5-6 min each — not actually faster than Sonnet despite being
+marketed as a lighter model). Recovered the same way as the earlier Sonnet hang:
+killed the process, reconstructed the 3 already-completed cases from LangSmith traces
+via the real `price_fill_node` (accuracy only depends on `takeoff` output, not
+`draft` text, so a stuck draft call doesn't block reconstructing that case's number),
+and re-ran only the 3 remaining cases standalone — no case was double-paid-for.
+
+Conclusion: this isn't a real trade-off to weigh the way the takeoff-model change
+was — it's strictly worse on accuracy than the Haiku-takeoff branch while also being
+unreliable, and the extra cost savings beyond that branch aren't worth trading away
+most of the accuracy gain that branch already secured. Reverted; not merged, not
+carried forward as an open question.
+
 ## What's left
 
 Nothing below has started; no work begins on any of it until the user directs it:
@@ -117,5 +148,6 @@ Nothing below has started; no work begins on any of it until the user directs it
 - Estimator authentication (§7.2 #4)
 - Scheduled price-refresh agent (the unbuilt half of §7.2 #2)
 - Further quote-accuracy calibration once Company A provides real labor-rate figures (the current 50% cut is data-grounded but explicitly a placeholder — see `docs/quote-accuracy-eval.md`)
+- The recurring OpenRouter hang (now seen on both Sonnet and GLM-5.2) makes a request timeout on `app/agent/llm.py`'s clients higher priority, not lower — two separate models have shown this failure mode now
 - Decide on the cheaper-takeoff-model branch above (merge, keep as Sonnet, or run more repetitions first)
 - Add a request timeout (+ retry/fallback) to `app/agent/llm.py`'s OpenRouter clients — confirmed live 2026-07-25, not just theoretical: a hung call currently waits forever instead of failing over

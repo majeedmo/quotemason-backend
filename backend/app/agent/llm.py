@@ -39,7 +39,11 @@ def codes_model() -> ChatOpenAI:
 
 
 def drafting_model() -> ChatOpenAI:
-    return _chat(settings.drafting_model, "drafting", temperature=0.3)
+    """Cost experiment 2026-07-25: draft stage temporarily on GLM-5.2 instead
+    of settings.drafting_model (claude-sonnet-5) -- intake/codes/takeoff stay
+    on Haiku (see takeoff_model()). Validate against the quote-accuracy eval
+    before trusting this (see docs/capstone-progress.md)."""
+    return _chat("z-ai/glm-5.2", "drafting", temperature=0.3)
 
 
 def takeoff_model() -> ChatOpenAI:
