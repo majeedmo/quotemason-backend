@@ -342,9 +342,8 @@ def test_override_price_unknown_line_ref(api, monkeypatch):
 
 
 def test_override_price_already_priced_line_rejected(api, monkeypatch):
-    """Capstone scope: only lines still marked 'unpriced' are eligible --
-    this is the one guard clause to relax when overrides open up to any
-    line."""
+    """Only lines _needs_price() considers priceable are eligible -- a row
+    with a real price_sheet result is not."""
     priced_state = {**DRAFT_STATE,
                     "price_resolution": [
                         {"category": "flooring", "item": "lvp", "quantity": 900,
@@ -381,3 +380,82 @@ def test_override_price_checkpointer_state_unavailable(api, monkeypatch):
     _set_graph(monkeypatch, {})
     assert api.post("/quotes/1/lines/t1/price",
                     json={"price_cad": 10}).status_code == 409
+
+
+TAVILY_NO_PRICE_STATE = {**DRAFT_STATE,
+                         "price_resolution": [
+                             {"category": "plumbing", "quantity": 1, "unit": "ea",
+                              "takeoff_line_ref": "t1", "price_source": "unpriced",
+                              "note": "no material or labor key on this line — "
+                                      "estimator to price"},
+                             {"category": "kitchen", "quantity": 1, "unit": "lump_sum",
+                              "takeoff_line_ref": "t2", "price_source": "tavily",
+                              "answer": "cabinetry typically costs around $356",
+                              "note": None},
+                         ]}
+
+
+def test_override_price_accepts_tavily_row_with_no_usable_price(api, monkeypatch):
+    """price_source "tavily" with no extended_quoted_cad (web search returned
+    narrative text only, no parseable number) is just as unpriced as
+    price_source "unpriced" -- seen live on quote #24's cabinetry line."""
+    _set_graph(monkeypatch, TAVILY_NO_PRICE_STATE)
+    api.post("/chat", json={"thread_id": "t1", "message": "spec"})
+    captured = {}
+    _fake_draft_node(monkeypatch, captured)
+    out = api.post("/quotes/1/lines/t2/price", json={"price_cad": 900})
+    assert out.status_code == 200
+    priced = next(r for r in captured["price_resolution"]
+                  if r["takeoff_line_ref"] == "t2")
+    assert priced["price_source"] == "estimator_override"
+    assert priced["extended_quoted_cad"] == 900
+
+
+def test_batch_override_prices_multiple_lines_in_one_version(api, monkeypatch):
+    _set_graph(monkeypatch, TAVILY_NO_PRICE_STATE)
+    api.post("/chat", json={"thread_id": "t1", "message": "spec"})
+    captured = {}
+    _fake_draft_node(monkeypatch, captured)
+    out = api.post("/quotes/1/lines/price", json={"overrides": [
+        {"takeoff_line_ref": "t1", "price_cad": 250, "note": "site visit"},
+        {"takeoff_line_ref": "t2", "price_cad": 900},
+    ]})
+    assert out.status_code == 200
+    row = out.json()
+    assert row["version"] == 2  # exactly one new version for both lines
+
+    resolved = {r["takeoff_line_ref"]: r for r in captured["price_resolution"]}
+    assert resolved["t1"]["price_source"] == "estimator_override"
+    assert resolved["t1"]["extended_quoted_cad"] == 250
+    assert resolved["t2"]["price_source"] == "estimator_override"
+    assert resolved["t2"]["extended_quoted_cad"] == 900
+
+    # one audit row per line, both pointing at the same new version
+    assert len(api.fake_store.price_overrides) == 2
+    assert {o["takeoff_line_ref"] for o in api.fake_store.price_overrides} == {"t1", "t2"}
+    assert all(o["result_quote_id"] == row["id"] for o in api.fake_store.price_overrides)
+
+
+def test_batch_override_all_or_nothing_on_bad_line(api, monkeypatch):
+    """One invalid ref in the batch rejects the whole request -- no version
+    is created, not even for the valid lines."""
+    _set_graph(monkeypatch, TAVILY_NO_PRICE_STATE)
+    api.post("/chat", json={"thread_id": "t1", "message": "spec"})
+    out = api.post("/quotes/1/lines/price", json={"overrides": [
+        {"takeoff_line_ref": "t1", "price_cad": 250},
+        {"takeoff_line_ref": "does-not-exist", "price_cad": 900},
+    ]})
+    assert out.status_code == 404
+    assert api.get("/quotes/1").json()["status"] == "pending_review"
+    assert api.get("/quotes").json() == [api.get("/quotes/1").json()]
+    assert api.fake_store.price_overrides == []
+
+
+def test_batch_override_rejects_duplicate_refs(api, monkeypatch):
+    _set_graph(monkeypatch, TAVILY_NO_PRICE_STATE)
+    api.post("/chat", json={"thread_id": "t1", "message": "spec"})
+    out = api.post("/quotes/1/lines/price", json={"overrides": [
+        {"takeoff_line_ref": "t1", "price_cad": 250},
+        {"takeoff_line_ref": "t1", "price_cad": 300},
+    ]})
+    assert out.status_code == 400
