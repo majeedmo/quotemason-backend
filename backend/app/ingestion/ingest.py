@@ -42,7 +42,7 @@ def report(chunks: list[Chunk]) -> None:
         sys.exit(1)
 
 
-def upsert(chunks: list[Chunk]) -> None:
+def upsert(chunks: list[Chunk], recreate: bool = False) -> None:
     from langchain_core.documents import Document
     from langchain_openai import OpenAIEmbeddings
     from langchain_qdrant import QdrantVectorStore
@@ -59,6 +59,9 @@ def upsert(chunks: list[Chunk]) -> None:
     else:
         client = QdrantClient(path=str(settings.qdrant_local_path))
 
+    if recreate and client.collection_exists(settings.qdrant_collection):
+        client.delete_collection(settings.qdrant_collection)
+
     if not client.collection_exists(settings.qdrant_collection):
         client.create_collection(
             collection_name=settings.qdrant_collection,
@@ -70,10 +73,12 @@ def upsert(chunks: list[Chunk]) -> None:
     filter_fields = {
         "doc_type": PayloadSchemaType.KEYWORD,
         "jurisdiction": PayloadSchemaType.KEYWORD,
+        "contractor_id": PayloadSchemaType.KEYWORD,
         "city": PayloadSchemaType.KEYWORD,
         "package_tier": PayloadSchemaType.KEYWORD,
         "scope": PayloadSchemaType.KEYWORD,
         "synthetic": PayloadSchemaType.BOOL,
+        "project_code": PayloadSchemaType.KEYWORD,
     }
     for field, schema in filter_fields.items():
         client.create_payload_index(
@@ -104,6 +109,9 @@ def main() -> None:
                     help="load + chunk + validate only; no embedding, no Qdrant")
     ap.add_argument("--show", metavar="N", type=int, default=0,
                     help="print the first N chunks (for eyeballing)")
+    ap.add_argument("--recreate", action="store_true",
+                    help="drop and rebuild the collection before upserting "
+                         "(needed if chunk IDs changed, e.g. files moved)")
     args = ap.parse_args()
 
     chunks = build_chunks()
@@ -112,7 +120,7 @@ def main() -> None:
         print("\n" + "=" * 70)
         print(c.text[:600])
     if not args.dry_run:
-        upsert(chunks)
+        upsert(chunks, recreate=args.recreate)
 
 
 if __name__ == "__main__":

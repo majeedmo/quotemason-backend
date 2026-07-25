@@ -1,23 +1,35 @@
-"""Graph nodes. intake -> (ask | hard_route | retrieve -> pricing -> draft)."""
+"""Graph nodes. intake -> (ask | hard_route | codes -> takeoff -> price_fill
+-> draft). The three drafting stages produce structured outputs (schemas.py)
+persisted with the draft — the substrate of the quote-accuracy eval."""
 
 from __future__ import annotations
 
 import json
+import logging
 import re
 
-from langchain_core.messages import AIMessage, SystemMessage
+from langchain_core.messages import (AIMessage, HumanMessage, SystemMessage,
+                                     ToolMessage)
+from pydantic import ValidationError
 
-from app.agent import guidelines, prompts
-from app.agent.llm import drafting_model, intake_model
+from app.agent import guidelines, prompts, schemas
+from app.agent.llm import codes_model, drafting_model, intake_model
 from app.agent.state import AgentState
 from app.config import settings
+from app.pricing import allowances, labor, materials
 from app.retrieval import get_retriever
+from app.tools import regulatory
+
+logger = logging.getLogger(__name__)
 
 _FENCE = re.compile(r"^```(?:json)?\s*|\s*```$", re.M)
 _JSON_START = re.compile(r'\{\s*"')
 
 
-def _parse_intake(raw: str) -> dict:
+def _parse_json_block(raw: str, required_key: str) -> dict | None:
+    """Prompted-JSON salvage shared by every stage: accept a clean object,
+    else scan for the first embedded object carrying required_key (models
+    wrap JSON in prose — seen live 2026-07-14). None when nothing parses."""
     text = _FENCE.sub("", raw.strip())
     try:
         out = json.loads(text)
@@ -25,23 +37,43 @@ def _parse_intake(raw: str) -> dict:
             return out
     except json.JSONDecodeError:
         pass
-    # Model wrapped the JSON in prose (seen live 2026-07-14: summary text,
-    # then the fenced object): salvage the first object that has "action".
     dec = json.JSONDecoder()
     for m in _JSON_START.finditer(text):
         try:
             obj, _ = dec.raw_decode(text, m.start())
         except json.JSONDecodeError:
             continue
-        if isinstance(obj, dict) and "action" in obj:
+        if isinstance(obj, dict) and required_key in obj:
             return obj
+    return None
+
+
+def _parse_intake(raw: str) -> dict:
+    out = _parse_json_block(raw, required_key="action")
+    if out is not None:
+        return out
     # Model broke format: treat its text as a plain follow-up question —
     # cut before any JSON-ish tail so raw JSON never reaches the client.
+    text = _FENCE.sub("", raw.strip())
     m = _JSON_START.search(text)
     reply = (text[: m.start()] if m else text).strip()
     return {"action": "ask",
             "reply": reply or "Could you tell me a bit more about your project?",
             "slots": {}, "flags": [], "hard_trigger": None}
+
+
+def _validated(model_cls, raw, required_key: str):
+    """Salvage-parse then schema-validate; None on any failure (caller
+    degrades — a bad stage output must never block drafting)."""
+    obj = _parse_json_block(raw if isinstance(raw, str) else json.dumps(raw),
+                            required_key)
+    if obj is None:
+        return None
+    try:
+        return model_cls.model_validate(obj)
+    except ValidationError as e:
+        logger.warning("%s validation failed: %s", model_cls.__name__, e)
+        return None
 
 
 def _tag_routing(level: str, categories: list[str]) -> None:
@@ -105,84 +137,354 @@ def hard_route_node(state: AgentState) -> dict:
     }}
 
 
-def retrieve_node(state: AgentState) -> dict:
-    r = get_retriever()
-    s = state.get("slots", {})
-    scope = str(s.get("scope", "basement"))
-    tier = None
-    tb = str(s.get("package_tier_budget", "") or "")
+def _pack(hits):
+    """Dedup retrieval hits by citation into draft-context rows."""
+    seen, out = set(), []
+    for h in hits:
+        if h.citation in seen:
+            continue
+        seen.add(h.citation)
+        out.append({"citation": h.citation, "text": h.text})
+    return out
+
+
+def _tier(slots: dict) -> str | None:
+    tb = str(slots.get("package_tier_budget", "") or "")
     for t in ("ESSENTIAL", "SUPERIOR", "SUPREME"):
         if t in tb.upper():
-            tier = t
-    accessory = "accessory" in scope.lower()
+            return t
+    return None
 
-    def pack(hits):
+
+def _checklist_from_seeds(seeds: dict) -> schemas.CodesChecklist:
+    """Deterministic degrade path: a checklist built straight from the
+    applicable_codes() seed rows, so the draft always has cited code context
+    even when the codes model output can't be parsed."""
+    items = [schemas.CodeItem(
+        requirement=row["citation"], citation=row["citation"], doc_type=dt,
+        section_number=row.get("section_number", ""),
+        applies_because="deterministic baseline applicability check",
+        action="verify_on_site")
+        for dt, rows in seeds.items() for row in rows]
+    return schemas.CodesChecklist(
+        zoning_jurisdiction=settings.zoning_jurisdiction, items=items,
+        notes="deterministic fallback — codes model output could not be parsed")
+
+
+_RETRY_JSON = "Respond now with ONLY the JSON object in the required schema."
+
+
+def codes_node(state: AgentState) -> dict:
+    """Stage 1: applicable-codes checklist. Seeded by the deterministic
+    regulatory baseline; the model may add project-specific lookups via
+    tool-calling (bounded), then emits a schema-validated checklist."""
+    s = state.get("slots", {})
+    seeds = regulatory.applicable_codes(s)
+    tool_rows: list[dict] = []
+    checklist = None
+    try:
+        tools = {t.name: t for t in regulatory.REGULATORY_TOOLS}
+        bound = codes_model().bind_tools(regulatory.REGULATORY_TOOLS)
+        msgs = [SystemMessage(prompts.codes_system()),
+                HumanMessage(prompts.codes_user(
+                    s, seeds, state.get("estimator_feedback")))]
+        resp = bound.invoke(msgs)
+        for _ in range(3):
+            calls = getattr(resp, "tool_calls", None) or []
+            if not calls:
+                break
+            msgs.append(resp)
+            for tc in calls:
+                tool = tools.get(tc.get("name"))
+                try:
+                    result = tool.invoke(tc.get("args") or {}) if tool else []
+                except Exception as e:
+                    result = [{"error": str(e)}]
+                tool_rows.extend(r for r in result if isinstance(r, dict)
+                                 and "citation" in r)
+                msgs.append(ToolMessage(json.dumps(result, default=str),
+                                        tool_call_id=tc.get("id", "")))
+            resp = bound.invoke(msgs)
+        if getattr(resp, "tool_calls", None):
+            # still asking after the cap — force a final, tool-free answer
+            resp = codes_model().invoke(msgs + [HumanMessage(_RETRY_JSON)])
+        checklist = _validated(schemas.CodesChecklist, resp.content, "items")
+        if checklist is None:
+            retry = codes_model().invoke(
+                msgs + [resp, HumanMessage(_RETRY_JSON)])
+            checklist = _validated(schemas.CodesChecklist, retry.content, "items")
+    except Exception:
+        logger.exception("codes stage failed — using deterministic checklist")
+    if checklist is None:
+        checklist = _checklist_from_seeds(seeds)
+    for i, item in enumerate(checklist.items, start=1):
+        item.id = f"c{i}"  # assigned in code, never by the model — no drift/collision
+
+    def rows_for(dt: str) -> list[dict]:
+        rows = list(seeds.get(dt, [])) + [r for r in tool_rows
+                                          if r.get("doc_type") == dt]
         seen, out = set(), []
-        for h in hits:
-            if h.citation in seen:
+        for r in rows:
+            if r["citation"] in seen:
                 continue
-            seen.add(h.citation)
-            out.append({"citation": h.citation, "text": h.text})
+            seen.add(r["citation"])
+            out.append({"citation": r["citation"], "text": r.get("text", "")})
         return out
 
+    retrieved = {**state.get("retrieved", {}),
+                 "building_code": rows_for("building_code")}
+    zoning = rows_for("zoning_bylaw")
+    if zoning:
+        retrieved["zoning_bylaw"] = zoning
+    return {"codes_checklist": checklist.model_dump(), "retrieved": retrieved}
+
+
+def _enforce_code_coverage(takeoff: schemas.Takeoff,
+                           checklist: schemas.CodesChecklist) -> None:
+    """Every mandatory ("line_item") code requirement must have a traceable
+    takeoff line. The takeoff prompt instructs this but doesn't enforce it —
+    a dropped requirement would otherwise vanish from the draft silently.
+    Mutates takeoff.lines in place, injecting an unpriced placeholder line
+    for anything missing (never drops it, mirrors price_fill's philosophy)."""
+    mandatory = {i.id for i in checklist.items if i.action == "line_item"}
+    covered = {ln.code_item_ref for ln in takeoff.lines if ln.code_item_ref}
+    by_id = {i.id: i for i in checklist.items}
+    next_idx = len(takeoff.lines) + 1
+    for missing_id in sorted(mandatory - covered):
+        item = by_id[missing_id]
+        takeoff.lines.append(schemas.TakeoffLine(
+            id=f"t{next_idx}", category="code_required", quantity=0,
+            unit="lump_sum", description=item.requirement,
+            basis=f"mandatory per codes checklist ({item.citation}) — "
+                  "takeoff stage did not quantify this",
+            source="code_item", code_item_ref=missing_id))
+        next_idx += 1
+
+
+def takeoff_node(state: AgentState) -> dict:
+    """Stage 2: structured material-quantity takeoff from §4 rules of thumb,
+    the codes checklist, and comparable past projects. Degrades to None —
+    stage 3 then drafts from raw context, as the single-shot drafter did."""
+    s = state.get("slots", {})
+    scope = str(s.get("scope", "basement"))
+    tier = _tier(s)
     quote_q = (f"{scope} {s.get('gfa_sqft', '')} sqft "
                f"{'separate entrance' if s.get('separate_entrance') else ''} "
                f"{s.get('kitchen', '')} {tier or ''}")
-    code_qs = ["minimum ceiling height basement rooms"]
-    if s.get("bedrooms_egress"):
-        code_qs.append("bedroom egress window requirements")
-    if accessory:
-        code_qs += ["fire separation between dwelling units",
-                    "smoke alarms carbon monoxide alarms secondary suite",
-                    "change of use second suite requirements"]
-    code_hits = [h for q in code_qs for h in r.search_building_code(q, k=3)]
+    comparables = _pack(get_retriever().search_past_quotes(
+        quote_q, k=6, package_tier=tier,
+        exclude_project_codes=state.get("_eval_exclude_project_codes")))
+    item_keys = sorted(f"{c}/{i}" for c, i in materials.load_price_sheet())
+    trade_keys = sorted({trade for trade, _ in labor.load_labor_rates()})
+    allowance_keys = sorted(f"{c}/{i}" for c, i in allowances.load_allowances())
+    checklist_dict = state.get("codes_checklist") or {}
+    takeoff = None
+    try:
+        msgs = [SystemMessage(prompts.takeoff_system()),
+                HumanMessage(prompts.takeoff_user(
+                    s, guidelines.section("4"), comparables,
+                    checklist_dict, item_keys, trade_keys, allowance_keys,
+                    state.get("estimator_feedback")))]
+        m = drafting_model()
+        resp = m.invoke(msgs)
+        takeoff = _validated(schemas.Takeoff, resp.content, "lines")
+        if takeoff is None:
+            retry = m.invoke(msgs + [resp, HumanMessage(_RETRY_JSON)])
+            takeoff = _validated(schemas.Takeoff, retry.content, "lines")
+    except Exception:
+        logger.exception("takeoff stage failed — drafting from raw context")
+    if takeoff is not None:
+        for i, line in enumerate(takeoff.lines, start=1):
+            line.id = f"t{i}"  # assigned in code, never by the model
+        if checklist_dict.get("items"):
+            _enforce_code_coverage(takeoff,
+                                   schemas.CodesChecklist.model_validate(checklist_dict))
+    return {"takeoff": takeoff.model_dump() if takeoff else None,
+            "retrieved": {**state.get("retrieved", {}),
+                          "past_project_quote": comparables}}
 
-    retrieved = {
-        "past_project_quote": pack(r.search_past_quotes(quote_q, k=6,
-                                                        package_tier=tier)),
-        "building_code": pack(code_hits),
-        "builder_guideline": pack(r.search_guidelines(
-            f"allowances rules of thumb {tier or ''} {scope}", k=4)),
-    }
-    if accessory:
-        retrieved["zoning_bylaw"] = pack(
-            r.search_zoning("additional residential unit basement apartment "
-                            "requirements parking", k=3))
-    return {"retrieved": retrieved}
+
+_LABOR_LUMP_UNITS = {"lump_sum"}
 
 
-def pricing_node(state: AgentState) -> dict:
-    """Tavily spot-check for volatile materials (never vendor scraping)."""
-    if not settings.tavily_api_key:
-        return {"pricing": [{"note": "TAVILY_API_KEY not set — pricing "
-                                     "spot-check skipped; draft from "
-                                     "allowances/comparables only"}]}
-    from tavily import TavilyClient
-    s = state.get("slots", {})
-    queries = ["luxury vinyl plank flooring installed price per sqft Ontario"]
-    if s.get("kitchen") and str(s.get("kitchen")).lower() not in ("no", "none", "false"):
-        queries.append("quartz countertop installed price per sqft Ontario")
-    if s.get("bedrooms_egress"):
-        queries.append("egress window installation cost Ontario")
-    client = TavilyClient(api_key=settings.tavily_api_key)
-    out = []
-    for q in queries[:3]:
-        try:
-            resp = client.search(q, max_results=3, include_answer=True)
-            out.append({"query": q, "answer": resp.get("answer"),
-                        "results": [{"title": x["title"], "url": x["url"]}
-                                    for x in resp.get("results", [])]})
-        except Exception as e:
-            out.append({"query": q, "error": str(e)})
-    return {"pricing": out}
+def price_fill_node(state: AgentState) -> dict:
+    """Deterministic price resolution — no LLM. Sheet-first (staleness-gated
+    for materials, status-gated for labor, tier-gated for allowances),
+    per-item web fallback when a Tavily key is present, honest 'unpriced'
+    rows otherwise. Arithmetic happens here in code so the accuracy eval can
+    assert it.
+
+    A takeoff line can price against a material, a labor rate, AND a tier
+    allowance — each becomes its own price_resolution row sharing
+    takeoff_line_ref, never a blended number, so each dollar's source stays
+    independently auditable. A spec-only allowance cell at the project's
+    tier (no $ figure) falls back to the material sheet under the same
+    (category, item) key rather than going straight to unpriced."""
+    takeoff = state.get("takeoff") or {}
+    lines = takeoff.get("lines") or []
+    gfa_sqft = takeoff.get("gfa_sqft")
+    gfa_band = labor.job_size_band(gfa_sqft)
+    tier = _tier(state.get("slots", {}))
+    rows: list[dict] = []
+    charged_lump_trades: set[str] = set()
+    tavily_client = None
+    tavily_used = 0
+
+    def _tavily_fallback(base: dict, desc: str, status: str) -> dict:
+        nonlocal tavily_client, tavily_used
+        if settings.tavily_api_key and tavily_used < 3:
+            try:
+                if tavily_client is None:
+                    from tavily import TavilyClient
+                    tavily_client = TavilyClient(api_key=settings.tavily_api_key)
+                q = f"{desc} price Ontario"
+                resp = tavily_client.search(q, max_results=3, include_answer=True)
+                tavily_used += 1
+                return {**base, "price_source": "tavily", "sheet_status": status,
+                       "query": q, "answer": resp.get("answer"),
+                       "results": [{"title": x["title"], "url": x["url"]}
+                                   for x in resp.get("results", [])]}
+            except Exception as e:
+                return {**base, "price_source": "unpriced", "sheet_status": status,
+                       "note": f"web price check failed ({e}) — estimator to price"}
+        return {**base, "price_source": "unpriced", "sheet_status": status,
+               "note": (f"no fresh sheet price ({status})"
+                        + ("" if settings.tavily_api_key
+                           else " and TAVILY_API_KEY not set")
+                        + " — estimator to price")}
+
+    def _price_material(cat: str, item: str, qty: float, base: dict, desc: str) -> dict:
+        """(category, item) against the material price sheet; Tavily
+        fallback if missing/stale. Shared by the "item" branch and the
+        allowance-fallback path (a spec-only tier cell falls back to the
+        material sheet under the same key)."""
+        sheet_row = materials.lookup(cat, item)
+        if sheet_row and not materials.is_stale(sheet_row):
+            quoted = materials.quoted_price(sheet_row)
+            return {**base, "item": item,
+                   "unit_price_low_cad": sheet_row.price_low_cad,
+                   "unit_price_high_cad": sheet_row.price_high_cad,
+                   "unit_price_quoted_cad": quoted,
+                   "extended_low_cad": round(qty * sheet_row.price_low_cad, 2),
+                   "extended_high_cad": round(qty * sheet_row.price_high_cad, 2),
+                   "extended_quoted_cad": round(qty * quoted, 2),
+                   "sheet_unit": sheet_row.unit,
+                   "price_source": "price_sheet",
+                   "source_detail": (f"{sheet_row.source} (updated "
+                                     f"{sheet_row.updated_at.isoformat()})"),
+                   "stale": False}
+        status = "stale" if sheet_row else "missing"
+        return _tavily_fallback({**base, "item": item}, desc or item, status)
+
+    def _bare_key(key: str) -> str:
+        """The takeoff model sometimes echoes the full "category/item" pair
+        from the prompt's key lists into item/allowance_item instead of
+        splitting it (observed live) — tolerate it rather than let every
+        lookup silently miss."""
+        return key.rsplit("/", 1)[-1] if "/" in key else key
+
+    for line in lines:
+        cat = str(line.get("category", ""))
+        item = _bare_key(str(line.get("item", "") or ""))
+        trade = str(line.get("trade", "") or "")
+        allowance_item = _bare_key(str(line.get("allowance_item", "") or ""))
+        qty = float(line.get("quantity") or 0)
+        unit = line.get("unit", "")
+        desc = line.get("description", "")
+        base = {"category": cat, "description": desc, "quantity": qty,
+                "unit": unit, "takeoff_line_ref": line.get("id", "")}
+
+        priced_anything = False
+        if item:
+            priced_anything = True
+            rows.append(_price_material(cat, item, qty, base, desc))
+
+        if allowance_item:
+            priced_anything = True
+            arow = allowances.lookup(cat, allowance_item)
+            tier_quoted = allowances.quoted_value(arow, tier) if arow else None
+            if arow and tier_quoted is not None:
+                lo, hi = allowances.tier_range(arow, tier)
+                rows.append({**base, "allowance_item": allowance_item,
+                            "unit_price_low_cad": lo, "unit_price_high_cad": hi,
+                            "unit_price_quoted_cad": round(tier_quoted, 2),
+                            "extended_low_cad": round(qty * lo, 2),
+                            "extended_high_cad": round(qty * hi, 2),
+                            "extended_quoted_cad": round(qty * tier_quoted, 2),
+                            "sheet_unit": arow.unit,
+                            "price_source": "allowance",
+                            "source_detail": f"{arow.source} ({tier or 'unknown'} tier)"})
+            else:
+                # spec-only cell at this tier (or no allowance row at all) --
+                # fall back to the material sheet under the same key
+                rows.append({**_price_material(cat, allowance_item, qty, base, desc),
+                            "allowance_item": allowance_item})
+
+        if trade:
+            priced_anything = True
+            labor_row = labor.lookup(trade, gfa_band)
+            if labor_row is None:
+                rows.append({**base, "trade": trade, "price_source": "unpriced",
+                            "sheet_status": "missing",
+                            "note": (f"no labor rate found for trade '{trade}'"
+                                     + ("" if gfa_band else " (GFA unknown — cannot "
+                                        "determine job-size band)")
+                                     + " — estimator to price")})
+            else:
+                is_lump = labor_row.unit in _LABOR_LUMP_UNITS
+                quoted = labor.quoted_rate(labor_row, gfa_sqft)
+                ext_low = labor_row.rate_low_cad if is_lump else round(qty * labor_row.rate_low_cad, 2)
+                ext_high = labor_row.rate_high_cad if is_lump else round(qty * labor_row.rate_high_cad, 2)
+                ext_quoted = quoted if is_lump else round(qty * quoted, 2)
+                row = {**base, "trade": trade,
+                      "unit_price_low_cad": labor_row.rate_low_cad,
+                      "unit_price_high_cad": labor_row.rate_high_cad,
+                      "unit_price_quoted_cad": round(quoted, 2),
+                      "extended_low_cad": ext_low, "extended_high_cad": ext_high,
+                      "extended_quoted_cad": round(ext_quoted, 2),
+                      "sheet_unit": labor_row.unit,
+                      "price_source": "labor_rate",
+                      "source_detail": f"{labor_row.includes} ({labor_row.job_size_band})",
+                      "rate_unverified": labor.is_rate_unverified(labor_row),
+                      "site_dependent": labor.is_site_dependent(labor_row)}
+                if is_lump:
+                    # A lump-sum trade's rate already covers that trade's whole
+                    # project scope (see its "includes" column) -- if the
+                    # takeoff split that scope across multiple lines, only the
+                    # first charges the lump sum; later lines are the same job,
+                    # not additional cost.
+                    if trade in charged_lump_trades:
+                        row = {**row, "extended_low_cad": 0, "extended_high_cad": 0,
+                              "extended_quoted_cad": 0,
+                              "note": (f"lump-sum '{trade}' already charged on an earlier "
+                                       "takeoff line — this line's labor is part of that "
+                                       "same job, not billed again")}
+                    else:
+                        charged_lump_trades.add(trade)
+                rows.append(row)
+
+        if not priced_anything:
+            rows.append({**base, "price_source": "unpriced", "sheet_status": "missing",
+                        "note": "no material or labor key on this line — estimator to price"})
+
+    return {"price_resolution": rows}
 
 
 def draft_node(state: AgentState) -> dict:
+    """Stage 3: the cited quote draft, from the structured stage outputs plus
+    the contractor's guideline context (retrieved here, where it's used)."""
+    s = state.get("slots", {})
+    retrieved = {**state.get("retrieved", {}),
+                 "builder_guideline": _pack(get_retriever().search_guidelines(
+                     f"allowances rules of thumb {_tier(s) or ''} "
+                     f"{s.get('scope', 'basement')}", k=4))}
     msgs = [SystemMessage(prompts.draft_system()),
-            ("user", prompts.draft_user(state.get("slots", {}),
+            ("user", prompts.draft_user(s,
                                         state.get("flags", []),
-                                        state.get("retrieved", {}),
-                                        state.get("pricing", [])))]
+                                        retrieved,
+                                        state.get("codes_checklist"),
+                                        state.get("takeoff"),
+                                        state.get("price_resolution", [])))]
     feedback = state.get("estimator_feedback")
     if feedback:
         msgs.append(("user",
@@ -200,6 +502,7 @@ def draft_node(state: AgentState) -> dict:
                   "slots": state.get("slots", {})}
     return {"draft": draft, "routing_packet": packet,
             "estimator_feedback": None,
+            "retrieved": retrieved,
             "messages": [AIMessage("Draft quote prepared — routed to the "
                                    "estimator for review before anything "
                                    "reaches you. (Draft attached below.)\n\n"

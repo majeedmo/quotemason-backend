@@ -94,6 +94,126 @@ def build_leak_patterns(m: dict) -> list[re.Pattern]:
     ]
 
 
+# --- boilerplate trim ---------------------------------------------------------
+#
+# The source quotes carry contractor liability/marketing/administrative-policy
+# boilerplate that is verbatim (or near-verbatim) identical across every quote
+# it appears in (verified against all 23 corpus files before writing these
+# patterns) and carries zero comparable-project signal — it dilutes the RAG
+# corpus with redundant text that is, in any case, already the guideline
+# doc's job (§5 quoting rules: deposit, milestones, change-order fees,
+# warranty terms — injected verbatim into every draft). Trimmed here, at
+# generation time, rather than patching the already-redacted output, so
+# future quotes redacted through this script get the same treatment.
+#
+# Deliberately NOT touched: EXCLUSIONS (templated in most quotes but genuinely
+# project-specific in at least one — home_addition — so a blanket cut risks
+# losing real signal); PROJECT COST / RENOVATION-CONSTRUCTION MILESTONES
+# (genuine per-project dollar totals and payment schedules); OUT OF SCOPE,
+# ADD-ONS, NOTE (not surveyed); all numbered work-category line items.
+
+# Source docx paragraphs carry soft line-wraps mid-sentence (extract_docx
+# preserves them as literal \n), so boilerplate phrases must match across
+# whitespace runs, not literal single spaces. Escaping word-by-word (rather
+# than the whole phrase then substituting) avoids re.escape's own backslash
+# before each space colliding with the \s+ substitution.
+def _ws(phrase: str) -> str:
+    return r"\s+".join(re.escape(tok) for tok in phrase.split())
+
+
+# The unlabeled intro's liability paragraph — two middle-clause wordings seen
+# ("the estimate and the specifications" vs "the "scope of work" below").
+_INTRO_LIABILITY = re.compile(
+    _ws("Company A herein after called the") + r"\s*[“\"]Contractor[”\"]\s*" +
+    _ws("will provide labor and materials for the work as outlined in") + r"\s+"
+    r"(?:" + _ws("the estimate and the specifications") + "|"
+    r"the\s+[“\"]scope\s+of\s+work[”\"]\s+below" + r")\." +
+    r".*?" + _ws("will be billed accordingly") + r"\.\s*",
+    re.S)
+# Permit-fee-responsibility clause — only the common "Town/City of X Permit"
+# wording (the Ontario-Building-Code service-list variant seen in a couple of
+# files is structurally different and left alone rather than risk a bad cut).
+_INTRO_PERMIT = re.compile(
+    _ws("All work will be done as per") + r"\s+(?:Town|[Cc]ity)\s+of\s+\w+\s+" +
+    _ws("Permit for") + r".*?" + _ws("Fire rated Windows/Shutters etc") + r"\.\s*",
+    re.S)
+_INTRO_HOURS = re.compile(
+    _ws("Work shall be between the hours of 7:30 AM to 7:30 PM. Should Contractor require "
+        "occasional work outside these times, approval from the home owner should be obtained "
+        "prior to the time that work is required.") + r"\s*")
+_INTRO_NDA = re.compile(
+    _ws("By Signing this contract Client is agreeing to get into an NDA in which he/she not "
+        "allowed to deal directly with any sub-contractors until next two years provided by "
+        "the Contractor.") + r"\s*")
+
+# The full-page marketing bio ("WHO WE ARE?") through the page-footer
+# contact/address block that consistently follows it.
+_WHO_WE_ARE = re.compile(
+    r"WHO WE ARE\??.*?\[CONTRACTOR_ADDRESS\][^\n]*\n"
+    r"(?:Contact:[^\n]*\n)?(?:\[REDACTED_DOMAIN\][^\n]*\n)?",
+    re.S)
+
+# Named sections that are administrative/contractual boilerplate, wholesale —
+# stripped from the heading line through to the next recognized section
+# boundary (mirrors, without importing, the heading vocabulary
+# app/ingestion/chunking.py's chunk_quote() already treats as a boundary).
+_BOILERPLATE_SECTION_HEADS = re.compile(
+    r"^(WARRANTY|AGREEMENT OF SERVICES|CHANGE ORDER POLICY|CHANGE ORDERS)\s*:?\s*$", re.M)
+_NEXT_SECTION_BOUNDARY = re.compile(
+    r"^\s*(?:\d{1,2}\s*\|?\s+[A-Z][A-Z0-9 /&()+.,'’-]{4,80}?:"  # numbered work category
+    r"|SCOPE OF (?:PROJECT|WORK)"
+    r"|EXCLUSIONS|OUT OF SCOPE|ADD[- ]?ONS?|PROJECT COST|NOTE:?"
+    r"|RENOVATION\s*/\s*CONSTRUCTION MILESTONES"
+    r"|AGREEMENT OF SERVICES|CHANGE ORDER(?:S)?(?:\s+POLICY)?|WARRANTY)\b",
+    re.M)
+
+
+def _strip_boilerplate_sections(text: str) -> str:
+    out, pos = [], 0
+    for m in _BOILERPLATE_SECTION_HEADS.finditer(text):
+        if m.start() < pos:
+            continue  # already consumed by a previous removal in this pass
+        out.append(text[pos:m.start()])
+        nxt = _NEXT_SECTION_BOUNDARY.search(text, m.end())
+        pos = nxt.start() if nxt else len(text)
+    out.append(text[pos:])
+    return "".join(out)
+
+
+def strip_boilerplate(text: str) -> str:
+    text = _WHO_WE_ARE.sub("", text)
+    text = _INTRO_LIABILITY.sub("", text)
+    text = _INTRO_PERMIT.sub("", text)
+    text = _INTRO_HOURS.sub("", text)
+    text = _INTRO_NDA.sub("", text)
+    text = _strip_boilerplate_sections(text)
+    return text
+
+
+# --- GFA (project size) extraction ---------------------------------------------
+#
+# GFA is the primary comparability signal the pipeline already reasons about
+# (job-size bands, $/sqft rules of thumb) but wasn't structured anywhere --
+# only present, inconsistently, as free text near the top of some quotes.
+# Two wordings cover most of the corpus; a handful of files (redaction-map
+# "gfa_sqft" override) state no total sqft anywhere in the source at all --
+# supplied there from the owner's own records rather than left to guesswork,
+# consistent with this script's "never fabricate" redaction policy.
+_GFA_PATTERNS = [
+    re.compile(r"Approximately\s+([\d,]+)\s+SQFT", re.I),
+    re.compile(r"(?:TOTAL\s+BASEMENT\s+GFA|approximately\s+GFA)\s*[–-]\s*([\d,]+)\s+SQFT", re.I),
+]
+
+
+def extract_gfa_sqft(text: str, meta: dict) -> int | None:
+    for pat in _GFA_PATTERNS:
+        m = pat.search(text)
+        if m:
+            return int(m.group(1).replace(",", ""))
+    override = meta.get("gfa_sqft")
+    return int(override) if override is not None else None
+
+
 def extract_docx(path: Path) -> str:
     d = Document(path)
     out = [p.text.strip() for p in d.paragraphs if p.text.strip()]
@@ -131,9 +251,13 @@ def main() -> None:
         clean = raw
         for pat, repl in rules:
             clean = pat.sub(repl, clean)
+        # boilerplate trim runs after PII redaction: its patterns reference
+        # redaction output tokens like [CONTRACTOR_ADDRESS]
+        clean = strip_boilerplate(clean)
+        gfa = extract_gfa_sqft(clean, meta)
         slug = f"{meta['code']}-{meta['city'].lower()}-{meta['tier'].lower()}-{meta['scope']}" + (
             "-revised" if meta["revised"] else "")
-        fm = "\n".join([
+        fm_lines = [
             "---",
             f"project_code: '{meta['code']}'",
             "doc_type: 'past_project_quote'",
@@ -142,11 +266,16 @@ def main() -> None:
             f"street: '{meta.get('street', 'unspecified')}'",
             f"package_tier: '{meta['tier']}'",
             f"scope: '{meta['scope']}'",
+        ]
+        if gfa is not None:
+            fm_lines.append(f"gfa_sqft: {gfa}")
+        fm_lines += [
             f"revised: {str(meta['revised']).lower()}",
             "source_version: 'redacted 2026-07-12; original is local-only (quotes/ is gitignored)'",
             "---",
             "",
-        ])
+        ]
+        fm = "\n".join(fm_lines)
         out_path = OUT / f"{slug}.md"
         out_path.write_text(fm + clean + "\n")
         written += 1

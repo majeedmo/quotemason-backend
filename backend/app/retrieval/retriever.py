@@ -20,7 +20,7 @@ from functools import lru_cache
 
 from langchain_openai import OpenAIEmbeddings
 from qdrant_client import QdrantClient
-from qdrant_client.http.models import FieldCondition, Filter, MatchValue
+from qdrant_client.http.models import FieldCondition, Filter, MatchAny, MatchValue
 
 from app.config import settings
 
@@ -48,14 +48,22 @@ class RetrievedChunk:
             syn = " (SYNTHETIC)" if m.get("synthetic") else ""
             return (f"Past project {m.get('project_code', '?')}{syn} — "
                     f"{m.get('city', '?')}, {m.get('package_tier', '?')} package — {title}")
-        return f"Company A builder guidelines — {num} {title}".replace("—  ", "— ")
+        who = m.get("contractor_name", "Builder")
+        return f"{who} builder guidelines — {num} {title}".replace("—  ", "— ")
 
 
 def _conditions(meta_filters: dict) -> list[FieldCondition]:
     """None-valued filters mean 'no constraint', so optional arguments can be
-    passed straight through."""
-    return [FieldCondition(key=f"metadata.{k}", match=MatchValue(value=v))
-            for k, v in meta_filters.items() if v is not None]
+    passed straight through. A list/tuple value means "any of these" (e.g.
+    excluding a set of project codes for leave-one-out eval retrieval) —
+    no existing caller passed one before, so this is purely additive."""
+    out = []
+    for k, v in meta_filters.items():
+        if v is None:
+            continue
+        match = MatchAny(any=list(v)) if isinstance(v, (list, tuple)) else MatchValue(value=v)
+        out.append(FieldCondition(key=f"metadata.{k}", match=match))
+    return out
 
 
 def _default_client() -> QdrantClient:
@@ -96,27 +104,42 @@ class CorpusRetriever:
                            must={"doc_type": "building_code", "jurisdiction": "ontario"})
 
     def search_zoning(self, query: str, k: int = 5,
-                      jurisdiction: str = "cambridge") -> list[RetrievedChunk]:
-        """Zoning bylaw — the per-municipality layer (Cambridge only this build)."""
+                      jurisdiction: str | None = None) -> list[RetrievedChunk]:
+        """Zoning bylaw — the per-municipality layer (Cambridge only this build).
+        None means the deployment's configured jurisdiction."""
         return self.search(query, k=k,
-                           must={"doc_type": "zoning_bylaw", "jurisdiction": jurisdiction})
+                           must={"doc_type": "zoning_bylaw",
+                                 "jurisdiction": jurisdiction or settings.zoning_jurisdiction})
 
-    def search_guidelines(self, query: str, k: int = 5) -> list[RetrievedChunk]:
-        """Company A rules of thumb, tier allowances, labor bands, §6 triggers."""
-        return self.search(query, k=k, must={"doc_type": "builder_guideline"})
+    def search_guidelines(self, query: str, k: int = 5, *,
+                          contractor_id: str | None = None) -> list[RetrievedChunk]:
+        """This contractor's rules of thumb, tier allowances, labor bands,
+        §6 triggers. Scoped to the deployment's contractor by default."""
+        return self.search(query, k=k, must={
+            "doc_type": "builder_guideline",
+            "contractor_id": contractor_id or settings.contractor_id})
 
     def search_past_quotes(self, query: str, k: int = 5, *,
                            city: str | None = None,
                            package_tier: str | None = None,
                            scope: str | None = None,
-                           include_synthetic: bool = True) -> list[RetrievedChunk]:
-        """Comparable past projects. Frontmatter vocabulary: package_tier is
-        ESSENTIAL/SUPERIOR/SUPREME; scope e.g. 'basement', 'finished_basement',
-        'accessory_unit'; city is title-case ('Guelph', 'Oakville')."""
+                           include_synthetic: bool = True,
+                           contractor_id: str | None = None,
+                           exclude_project_codes: list[str] | None = None) -> list[RetrievedChunk]:
+        """Comparable past projects, scoped to the deployment's contractor.
+        Frontmatter vocabulary: package_tier is ESSENTIAL/SUPERIOR/SUPREME;
+        scope e.g. 'basement', 'finished_basement', 'accessory_unit'; city is
+        title-case ('Guelph', 'Oakville'). exclude_project_codes is for
+        leave-one-out accuracy-eval retrieval — excludes a project's own
+        historical quote (and its synthetic twin) so the pipeline can't
+        retrieve its own answer; None/absent in every production call site."""
         must = {"doc_type": "past_project_quote",
+                "contractor_id": contractor_id or settings.contractor_id,
                 "city": city, "package_tier": package_tier, "scope": scope}
-        must_not = None if include_synthetic else {"synthetic": True}
-        return self.search(query, k=k, must=must, must_not=must_not)
+        must_not = {} if include_synthetic else {"synthetic": True}
+        if exclude_project_codes:
+            must_not["project_code"] = list(exclude_project_codes)
+        return self.search(query, k=k, must=must, must_not=must_not or None)
 
 
 @lru_cache(maxsize=1)

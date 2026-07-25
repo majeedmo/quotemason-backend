@@ -6,16 +6,15 @@ city: 'Milton'
 street: 'Colville Place'
 package_tier: 'ESSENTIAL'
 scope: 'accessory_unit'
+gfa_sqft: 950
 revised: false
 source_version: 'redacted 2026-07-12; original is local-only (quotes/ is gitignored)'
 ---
-Company A herein after called the “Contractor” will provide labor and materials for the work as outlined in the “scope of work” below. The Contractor’s estimate is based on information provided by the owner, site visit reviews and the assumption that previous work has been performed following standard building practices and adequate maintenance has been performed. Unforeseen conditions requiring a change to the original scope of work may result in a work order and will be billed accordingly.
 All work will be done as per Ontario Building Code & City/Town Approved Permit (If required) for
 “New Build – Custom Home”			  “Home Renovation | Addition”
 “Garden Suite” – Separate Dwelling		  “Kitchen Makeover”
 “Basement Finish” – Personal or Rental 	  “Bathroom(s) Makeover”
 “Commercial Space Reno”
-Work shall be between the hours of 7:30 AM to 7:30 PM. Should Contractor require occasional work outside these times, approval from the home owner should be obtained prior to the time that work is required.
 CHANGE ORDERS: All changes made to project will require sign offs (per task) from project manager, as well as home owner. Changes will only be implemented if sign offs have been completed by both parties. No exceptions.
 Home owner WILL NOT address any changes with the sub trades or Company A field staff (i.e., Framer, Plumber, Electrician etc.).
 All changes will need to be sent through the project manager for efficient cost management. Separate estimate/document will be provided amongst ANY/ALL changes to project for sign off. Any change orders completed AFTER selected finishes signed off (and/or) scheduled work has commenced (whichever is completed first) will be subject to an ADMIN fee of up to $500 per change order.

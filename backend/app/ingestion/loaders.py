@@ -9,6 +9,12 @@ Sources (all pre-processed — see scripts/ and CLAUDE.md data-source notes):
 - corpus/cambridge-zoning-bylaw/parts/*.md  (doc_type: zoning_bylaw; extracted
   from the By-law 26-007 PDF by scripts/extract_zoning_bylaw.py — the
   council-report PDF in the same folder is never extracted or loaded)
+
+Ownership: building_code and zoning_bylaw are SHARED regulatory data — public,
+reusable by any contractor, and carry no contractor_id. past_project_quote and
+builder_guideline are CONTRACTOR-OWNED and are stamped with the deployment's
+contractor_id/contractor_name; retrieval filters on that id, so a second
+contractor's docs can coexist in the same collection without cross-talk.
 """
 
 from __future__ import annotations
@@ -20,6 +26,12 @@ from pathlib import Path
 import frontmatter
 
 from app.config import CORPUS_DIR
+from app.contractor import get_contractor
+
+
+def _contractor_meta() -> dict:
+    p = get_contractor()
+    return {"contractor_id": p.id, "contractor_name": p.internal_name}
 
 
 @dataclass
@@ -48,7 +60,9 @@ def load_quotes() -> list[CorpusDoc]:
     docs = []
     for folder in ("quotes-redacted", "quotes-synthetic"):
         for p in sorted((CORPUS_DIR / folder).glob("*.md")):
-            docs.append(_load_md(p, {"doc_type": "past_project_quote", "jurisdiction": "ontario"}))
+            docs.append(_load_md(p, {"doc_type": "past_project_quote",
+                                     "jurisdiction": "ontario",
+                                     **_contractor_meta()}))
     return docs
 
 
@@ -56,7 +70,9 @@ def load_guidelines() -> list[CorpusDoc]:
     docs = []
     gdir = CORPUS_DIR / "guidelines"
     for p in sorted(gdir.glob("*.md")):
-        docs.append(_load_md(p, {"doc_type": "builder_guideline", "jurisdiction": "ontario"}))
+        docs.append(_load_md(p, {"doc_type": "builder_guideline",
+                                 "jurisdiction": "ontario",
+                                 **_contractor_meta()}))
     for p in sorted(gdir.glob("*.csv")):
         with open(p, newline="") as f:
             rows = list(csv.reader(f))
@@ -69,6 +85,7 @@ def load_guidelines() -> list[CorpusDoc]:
             metadata={
                 "doc_type": "builder_guideline",
                 "jurisdiction": "ontario",
+                **_contractor_meta(),
                 "tabular": True,
                 "title": p.stem,
                 "source_file": rel,

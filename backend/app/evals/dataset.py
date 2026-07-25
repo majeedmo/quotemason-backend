@@ -26,6 +26,7 @@ DATA_DIR = Path(__file__).parent / "data"
 RAGAS_TESTSET_PATH = DATA_DIR / "ragas_testset.jsonl"
 RETRIEVAL_GOLDEN_PATH = DATA_DIR / "retrieval_golden.jsonl"
 AGENT_SCENARIOS_PATH = DATA_DIR / "agent_scenarios.json"
+QUOTE_ACCURACY_CASES_PATH = DATA_DIR / "quote_accuracy_cases.json"
 
 ROUTES = ("draft", "ask", "hard_route")
 
@@ -106,6 +107,29 @@ class AgentScenario:
     applies_to: list[str] = field(default_factory=list)
 
 
+@dataclass
+class QuoteAccuracyCase:
+    """One real past project used as a quote-accuracy test case: reconstructed
+    intake slots (hand-authored from a careful reading of the quote body —
+    frontmatter alone only carries scope/gfa_sqft/tier/city) run through
+    codes -> takeoff -> price_fill -> draft directly (see
+    run_quote_accuracy_eval.run_pipeline), skipping intake.
+
+    ``exclude_project_codes`` is this project's own code plus its synthetic
+    twin where one exists (see corpus frontmatter ``paired_with``) — leave-
+    one-out so takeoff_node's comparable-project retrieval can't hand the
+    pipeline its own historical answer.
+    """
+
+    id: str
+    project_code: str
+    slots: dict
+    actual_total_cad: float
+    exclude_project_codes: list[str]
+    tolerance_pct: float = 5.0
+    notes: str = ""
+
+
 def load_ragas_testset(path: Path = RAGAS_TESTSET_PATH) -> list[SyntheticCase]:
     cases = []
     for line in path.read_text().splitlines():
@@ -128,3 +152,7 @@ def load_retrieval_golden(path: Path = RETRIEVAL_GOLDEN_PATH) -> list[RetrievalC
 
 def load_agent_scenarios(path: Path = AGENT_SCENARIOS_PATH) -> list[AgentScenario]:
     return [AgentScenario(**row) for row in json.loads(path.read_text())]
+
+
+def load_quote_accuracy_cases(path: Path = QUOTE_ACCURACY_CASES_PATH) -> list[QuoteAccuracyCase]:
+    return [QuoteAccuracyCase(**row) for row in json.loads(path.read_text())]

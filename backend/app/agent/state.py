@@ -17,8 +17,14 @@ class AgentState(TypedDict, total=False):
     trigger: Trigger
     flags: list[dict]              # [{condition, flag_text}] — §6.2
     retrieved: dict[str, list]     # doc_type -> [{citation, text}]
-    pricing: list[dict]            # [{query, answer, results}]
+    codes_checklist: dict | None   # schemas.CodesChecklist.model_dump() (stage 1)
+    takeoff: dict | None           # schemas.Takeoff.model_dump() (stage 2)
+    price_resolution: list[dict]   # code-built priced rows (between stages 2-3)
     draft: str | None
     routing_packet: dict | None    # §6.3 estimator hand-off
     estimator_feedback: str | None  # set on a /revise invoke; cleared by draft
     _action: str                   # intake routing decision (internal)
+    _eval_exclude_project_codes: list[str]  # eval-only: leave-one-out retrieval
+                                             # exclusion; absent in every production
+                                             # path (graph/API) — quote-accuracy eval
+                                             # only, see run_quote_accuracy_eval.py

@@ -153,7 +153,13 @@ def _chunk_defined_terms(doc: CorpusDoc, batch_chars: int = 1800) -> list[Chunk]
 _QUOTE_HEADING = re.compile(
     r"^\s*(\d{1,2})\s*\|?\s+([A-Z][A-Z0-9 /&()+.,'’-]{4,80}?):", re.M)
 _QUOTE_BOILERPLATE = re.compile(
-    r"^\s*(AGREEMENT OF SERVICES|CHANGE ORDER POLICY|CHANGE ORDERS|EXCLUSIONS|WARRANTY|"
+    # AGREEMENT OF SERVICES / CHANGE ORDER POLICY / WARRANTY are stripped
+    # entirely at redaction time (scripts/redact_quotes.py strip_boilerplate)
+    # -- verbatim-identical contractual boilerplate across every quote,
+    # already the guideline doc's job (§5) -- so they can no longer appear
+    # here; CHANGE ORDERS kept as a safety net (an inline, non-heading
+    # variant of that text isn't caught by the redaction-time stripper).
+    r"^\s*(CHANGE ORDERS|EXCLUSIONS|"
     r"OUT OF SCOPE|ADD[- ]?ONS?|PROJECT COST|RENOVATION / CONSTRUCTION MILESTONES|NOTE)\b[:\s]*$",
     re.M | re.I)
 
@@ -161,7 +167,9 @@ _QUOTE_BOILERPLATE = re.compile(
 def chunk_quote(doc: CorpusDoc) -> list[Chunk]:
     code = doc.metadata.get("project_code", "?")
     syn = " (SYNTHETIC)" if doc.metadata.get("synthetic") else ""
-    prefix = (f"[Past project {code}{syn} — {{city}}, {{package_tier}} package, {{scope}}"
+    gfa = doc.metadata.get("gfa_sqft")
+    gfa_str = f", ~{gfa} sqft" if gfa else ""
+    prefix = (f"[Past project {code}{syn} — {{city}}, {{package_tier}} package, {{scope}}{gfa_str}"
               " | section: {num} {title}]")
     marks = sorted(
         [(m.start(), m.group(1) or "", m.group(2).strip()) for m in _QUOTE_HEADING.finditer(doc.text)]
@@ -184,7 +192,8 @@ _MD_HEADING = re.compile(r"^(#{2,3})\s+(.+)$", re.M)
 
 
 def chunk_guideline_md(doc: CorpusDoc) -> list[Chunk]:
-    prefix = "[Company A builder guidelines ({source_version}) — {num} {title}]"
+    contractor = doc.metadata.get("contractor_name", "Builder")
+    prefix = f"[{contractor} builder guidelines ({{source_version}}) — {{num}} {{title}}]"
     heads = list(_MD_HEADING.finditer(doc.text))
     if not heads:
         return _emit(doc, [("", str(doc.metadata.get("title", "")), doc.text)], prefix)
@@ -212,7 +221,8 @@ def chunk_guideline_csv(doc: CorpusDoc) -> list[Chunk]:
         groups.setdefault(key, []).append(r)
     sections = [(key, f"{doc.metadata.get('title', '')} — {key}",
                  header + "\n" + "\n".join(rs)) for key, rs in groups.items()]
-    return _emit(doc, sections, "[Company A rate/allowance table {title}]")
+    contractor = doc.metadata.get("contractor_name", "Builder")
+    return _emit(doc, sections, f"[{contractor} rate/allowance table {{title}}]")
 
 
 # --- zoning bylaw ---------------------------------------------------------------

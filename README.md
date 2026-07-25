@@ -67,7 +67,7 @@ uv run pytest
 
 Ingestion is structure-aware (OBC articles, quote work-categories, guideline sections — never fixed token windows), stamps every chunk with `{jurisdiction, doc_type, section_number, source_version, …}`, prefixes the citation into the chunk text, and upserts with deterministic IDs into one shared collection filtered at query time.
 
-The agent graph runs `intake → (ask | hard-route | retrieve → pricing → draft)`, checkpointed in Upstash Redis (conversation memory). Completed drafts persist to Neon Postgres as versioned `quote_drafts` rows for the estimator review gate: `GET /quotes` (queue) · `POST /quotes/{id}/edit` (logged to LangSmith as labeled eval data) · `POST /quotes/{id}/revise` (resumes the same thread, new version supersedes) · `POST /quotes/{id}/approve` (returns a `mailto:` stand-in — the agent never sends anything itself).
+The agent graph runs `intake → (ask | hard-route | codes → takeoff → price-fill → draft)` — a staged drafting pipeline (applicable codes via the shared regulatory tool, structured material takeoff, deterministic sheet-first price resolution with web fallback, then the cited draft) — checkpointed in Upstash Redis (conversation memory). Completed drafts persist to Neon Postgres as versioned `quote_drafts` rows for the estimator review gate: `GET /quotes` (queue) · `POST /quotes/{id}/edit` (logged to LangSmith as labeled eval data) · `POST /quotes/{id}/revise` (resumes the same thread, new version supersedes) · `POST /quotes/{id}/approve` (returns a `mailto:` stand-in — the agent never sends anything itself).
 
 ## Frontend quickstart
 
@@ -80,6 +80,30 @@ npm run dev                        # with the backend API running
 ```
 
 Three responsive routes (phone + laptop requirement): `/` fictional-contractor landing page → `/estimate` customer intake chat (per-tab thread resumes its Upstash checkpoint) → `/estimator` QuoteMason review console (queue, edit, request-changes revision, approve with copy/mailto stand-in send). Details: the frontend repo's README.
+
+## Corpus ownership model (capstone)
+
+The collection is one Qdrant index, but the data has two owners:
+
+- **Shared regulatory** (`corpus/OBC/`, `corpus/cambridge-zoning-bylaw/`) — public
+  data any contractor reuses. Chunks carry **no** `contractor_id`; the agent
+  reaches them only through the regulatory service (`backend/app/tools/regulatory.py`),
+  which is MCP-shaped (stateless, JSON in/out) so it can later ship as an MCP
+  server without code changes.
+- **Contractor-owned** (`corpus/quotes-*`, `corpus/guidelines/`,
+  `corpus/contractors/<id>/`) — stamped with `contractor_id`/`contractor_name`
+  at ingestion and filtered at query time. The deployment's contractor comes
+  from config (`CONTRACTOR_ID`, `CONTRACTOR_NAME`, `BRAND_NAME`,
+  `ZONING_JURISDICTION`); onboarding another contractor is config + their data
+  ingested under their id — no code changes. The owner-updatable material
+  price sheet lives at `corpus/contractors/company-a/material-prices.csv` and
+  is tool-read (staleness-gated), never ingested as RAG.
+
+**Deploy ordering note:** after pulling these changes, re-run ingestion against
+Qdrant Cloud **before** deploying the backend — the retriever now filters on
+`metadata.contractor_id`, which errors on Qdrant strict mode until the ingest
+creates the payload index and refreshes payloads (`uv run python -m
+app.ingestion.ingest`; chunk IDs are unchanged so it upserts in place).
 
 ## Data-handling policies
 

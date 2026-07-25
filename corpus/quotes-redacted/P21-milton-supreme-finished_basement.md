@@ -6,6 +6,7 @@ city: 'Milton'
 street: 'Pringle Ave'
 package_tier: 'SUPREME'
 scope: 'finished_basement'
+gfa_sqft: 745
 revised: false
 source_version: 'redacted 2026-07-12; original is local-only (quotes/ is gitignored)'
 ---
@@ -13,65 +14,6 @@ source_version: 'redacted 2026-07-12; original is local-only (quotes/ is gitigno
  
  
  
-WHO WE ARE? 
- 
- 
-We are a PASSIONATE Team, with MODERN and 
-INNOVATIVE ideas and an eye for detail to provide 
-high quality construction and renovation solutions to 
-exceed our client expectations. We work towards 
-providing unique solutions to our clients which are 
-inspiring and functional at the same time. 
- 
-Our Priorities 
-We work very hard to deliver and cater to satisfy our 
-customers to the best of our abilities. We believe in 
-developing a strong relationship with our client, 
-keeping in mind their choice and budget, to create 
-their warm and cozy living and work spaces according 
-to their own choices, where they can live their dream. 
- 
-Our Strength 
-Communication, Creativity and Quality  are our three 
-vital strengths. We work with our c lients by 
-incorporating their needs and ideas into our designs 
-that are modern, beautiful, functional and eco -
-friendly. We transform simple materials into a master 
-piece by only choosing the best of skill men who are 
-professional in their field. 
- 
-Our Services 
-▪ Design + Build Custom Homes  
-▪ Renovations & Additions 
-▪ Legal Basement Finish 
-▪ Kitchens & Bathrooms Makeover 
-▪ Commercial & Retail Space 
-▪ City/Town Permit Facilitation  
-▪ Interior Design & 3D Renderings  
-▪ Materials, Fabric, Finishes, Light Fixture, 
-Artwork, and Décor selection 
-▪ Construction Management 
- 
-Licensed & Insured  
-License Type: Building Renovator    
-License #: [REDACTED_ID] 
-WSIB - Workplace Safety & Insurance Board 
-Certification 
-$5 Million Commercial General Liability Insurance 
- 
-Company A team of experts makes your dream come 
-true! 
- 
-
- 
- 
-                                                                                                        
- 
- 
- 1 
-[CONTRACTOR_ADDRESS] | Unit A | Oakville | ON | [POSTAL_CODE] | Canada 
-Contact: [PHONE], email@[REDACTED_DOMAIN] 
-[REDACTED_DOMAIN] 
 February 18, 2026       Estimate # [ESTIMATE_NO] 
  
  
@@ -84,64 +26,8 @@ Company A’S SUPERIOR PACKAGE
  
  
  
-AGREEMENT OF SERVICES 
-This agreement is made between Company A (hereinafter referred to as the “Contractor”) and 
-the Client. The Contractor agrees to provide labor and materials necessary for the work outlined in the 
-Scope of Work section below. 
-The estimate provided is based on: 
-• Information supplied by the Client. 
-• Site visit assessments. 
-• The assumption that any prior work was completed in accordance with standard building 
-practices and that adequate maintenance has been carried out. 
-Note: Any unforeseen conditions requiring changes to the original scope of work will necessitate a work 
-order and will be billed accordingly. 
-All work will be performed in compliance with the Ontario Building Code and any applicable City/Town 
-Approved Permits (if required). 
-Work will be conducted between 8:30 AM and 8:30 PM. If occasional work outside these hours is required, 
-prior approval will be obtained from the Client. 
  
  
-CHANGE ORDER POLICY 
-1. Approval Requirement: 
-o All changes to the project must be approved and signed off by both the project manager 
-and the Client. 
-o No changes will be implemented without the necessary approvals. No exceptions. 
-2. Communication Protocol: 
-o Client are strictly advised not to communicate changes directly to sub-trades or Company A 
-field staff (e.g., Framer, Plumber, Electrician). 
-o All change requests must be directed through the project manager to ensure efficient cost 
-and timeline management. 
-o Important: Client must refrain from contacting sub-contractors directly for any construction 
-work outside the project’s scope. Such actions will be considered a breach of contract 
-and may result in legal action. 
-3. Documentation and Estimates: 
-o A detailed estimate or document will be provided for any and all changes to the project. 
-Both parties must sign off on this document before changes can proceed. 
-4. Administrative Fees: 
-o Change orders requested after finishes have been finalized or after scheduled work has 
-commenced will incur an administrative fee of up to $500 per change order. 
-5. Impact on Cost and Timeline: 
-o Change orders may impact the overall project cost and timeline. Adjustments will be 
-reflected based on the nature and scope of the requested changes. 
-Dr. [CLIENT] 
-[EMAIL] 
-[NO] Pringle Avenue, Milton [POSTAL_CODE] 
-(the “Client”) 
-Company A 
-[CONTRACTOR_ADDRESS], Unit A, 
-Oakville, ON, [POSTAL_CODE], Canada 
-(the “Contractor”) 
- 
- 
-                                                                                                        
- 
- 
- 2 
-[CONTRACTOR_ADDRESS] | Unit A | Oakville | ON | [POSTAL_CODE] | Canada 
-Contact: [PHONE], email@[REDACTED_DOMAIN] 
-[REDACTED_DOMAIN] 
-By adhering to this policy, we ensure a streamlined and efficient project process that meets expectations 
-and delivers the best results. 
  
  
 EXCLUSIONS 
@@ -152,33 +38,6 @@ to:
 ▪ Municipal parking fees. 
  
  
-WARRANTY 
-Company A provides a One-Year Service Warranty on all installations. All materials used are 
-guaranteed to meet the specified standards, and all work will be performed in compliance with current 
-building codes, approved drawings, and project specifications. 
-The work will be completed in a substantial and satisfactory workmanlike manner, ensuring the highest 
-quality and adherence to industry standards. 
- 
- 
-STREET SIGN BOARD 
-By signing this contract, the Client agrees to allow and place a Company A Street sign board at the 
-project site for the duration of the construction. This board will display essential information regarding the 
-project, including the company name, contact details, and ongoing work. The sign will remain visible until 
-the project is completed. 
- 
- 
- 
- 
-  
- 
- 
-                                                                                                        
- 
- 
- 3 
-[CONTRACTOR_ADDRESS] | Unit A | Oakville | ON | [POSTAL_CODE] | Canada 
-Contact: [PHONE], email@[REDACTED_DOMAIN] 
-[REDACTED_DOMAIN] 
 SCOPE OF WORK 
 WORK DESCRIPTION 
  TOTAL BASEMENT GFA – 745 SQFT 

@@ -18,6 +18,15 @@ def test_conditions_drop_none_and_prefix_metadata():
     ]
 
 
+def test_conditions_list_value_uses_match_any():
+    """A list value means "any of these" — used for leave-one-out eval
+    retrieval (excluding a set of project codes), never a single value."""
+    conds = _conditions({"project_code": ["P19", "S01"]})
+    assert len(conds) == 1
+    assert conds[0].key == "metadata.project_code"
+    assert conds[0].match.any == ["P19", "S01"]
+
+
 def test_citation_building_code():
     c = RetrievedChunk(text="", score=1.0, metadata={
         "doc_type": "building_code", "section_number": "9.9.10.1",
@@ -25,6 +34,17 @@ def test_citation_building_code():
         "source_version": "2024 Building Code Compendium (O. Reg. 163/24)"})
     assert c.citation == ("OBC 9.9.10.1 — Egress Windows or Doors for Bedrooms"
                           " | 2024 Building Code Compendium (O. Reg. 163/24)")
+
+
+def test_citation_guideline_uses_contractor_name_from_metadata():
+    c = RetrievedChunk(text="", score=1.0, metadata={
+        "doc_type": "builder_guideline", "contractor_name": "Company A",
+        "section_number": "5", "section_title": "Quoting rules"})
+    assert c.citation == "Company A builder guidelines — 5 Quoting rules"
+    bare = RetrievedChunk(text="", score=1.0, metadata={
+        "doc_type": "builder_guideline", "section_number": "5",
+        "section_title": "Quoting rules"})
+    assert bare.citation.startswith("Builder builder guidelines")
 
 
 def test_citation_synthetic_quote_is_marked():
@@ -62,8 +82,24 @@ def test_search_builds_filter_and_maps_payload():
     call = fake.calls[0]
     assert call.limit == 3
     must_keys = {c.key for c in call.query_filter.must}
-    assert must_keys == {"metadata.doc_type", "metadata.package_tier"}
+    assert must_keys == {"metadata.doc_type", "metadata.package_tier",
+                         "metadata.contractor_id"}
     assert [c.key for c in call.query_filter.must_not] == ["metadata.synthetic"]
+
+
+def test_contractor_scoped_helpers_default_to_settings(monkeypatch):
+    """search_guidelines / search_past_quotes are tenant-scoped: the deployment's
+    contractor_id is always in the filter unless explicitly overridden."""
+    from app.retrieval import retriever as mod
+    monkeypatch.setattr(mod.settings, "contractor_id", "company-b")
+    fake = _FakeClient()
+    r = CorpusRetriever(client=fake, embeddings=_FakeEmbeddings())
+    r.search_guidelines("allowances", k=2)
+    conds = {c.key: c.match.value for c in fake.calls[0].query_filter.must}
+    assert conds["metadata.contractor_id"] == "company-b"
+    r.search_guidelines("allowances", k=2, contractor_id="company-a")
+    conds = {c.key: c.match.value for c in fake.calls[1].query_filter.must}
+    assert conds["metadata.contractor_id"] == "company-a"
 
 
 def test_search_no_filters_passes_none():
@@ -71,3 +107,31 @@ def test_search_no_filters_passes_none():
     r = CorpusRetriever(client=fake, embeddings=_FakeEmbeddings())
     r.search("anything", k=2)
     assert fake.calls[0].query_filter is None
+
+
+def test_search_past_quotes_exclude_project_codes_reaches_filter():
+    """Leave-one-out for the quote-accuracy eval: excludes a project's own
+    historical quote (and its synthetic twin) so retrieval can't hand the
+    pipeline its own answer."""
+    fake = _FakeClient()
+    r = CorpusRetriever(client=fake, embeddings=_FakeEmbeddings())
+    r.search_past_quotes("finished basement", k=5,
+                        exclude_project_codes=["P19", "S01"])
+    must_not = {c.key: c for c in fake.calls[0].query_filter.must_not}
+    assert must_not["metadata.project_code"].match.any == ["P19", "S01"]
+
+
+def test_search_past_quotes_exclude_combines_with_synthetic_filter():
+    fake = _FakeClient()
+    r = CorpusRetriever(client=fake, embeddings=_FakeEmbeddings())
+    r.search_past_quotes("basement", k=5, include_synthetic=False,
+                        exclude_project_codes=["P19"])
+    must_not_keys = {c.key for c in fake.calls[0].query_filter.must_not}
+    assert must_not_keys == {"metadata.synthetic", "metadata.project_code"}
+
+
+def test_search_past_quotes_no_exclusion_by_default():
+    fake = _FakeClient()
+    r = CorpusRetriever(client=fake, embeddings=_FakeEmbeddings())
+    r.search_past_quotes("basement", k=5)
+    assert fake.calls[0].query_filter.must_not == []

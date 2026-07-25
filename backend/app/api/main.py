@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 from app.api import deps
 from app.config import settings
+from app.guardrails import check_duplicate, normalize_email, normalize_phone, property_key
 
 app = FastAPI(title="QuoteMason API",
               description="Agentic estimation assistant — intake chat and "
@@ -53,6 +54,11 @@ class ReviseIn(BaseModel):
     feedback: str
 
 
+class LoginIn(BaseModel):
+    username: str
+    password: str
+
+
 def _log_edit_to_langsmith(row: dict, edited_md: str) -> None:
     """Estimator edits are labeled eval data (brief, Task 5/6). Best-effort."""
     if not settings.langsmith_api_key:
@@ -75,10 +81,50 @@ def healthz():
     return {"ok": True}
 
 
+@app.post("/login")
+def login(body: LoginIn):
+    """Demo-only gate for the frontend's /dashboard — not real auth (see
+    Settings.estimator_demo_user/password). No session/token issued; the
+    frontend just flips a sessionStorage flag on success."""
+    if (body.username != settings.estimator_demo_user
+            or body.password != settings.estimator_demo_password
+            or not settings.estimator_demo_user):
+        raise HTTPException(401, "invalid username or password")
+    return {"ok": True}
+
+
+def _stage_outputs(state: dict) -> dict | None:
+    """The pipeline's structured outputs, persisted with the draft — the
+    quote-accuracy eval asserts against these, not the prose."""
+    out = {k: state.get(k)
+           for k in ("codes_checklist", "takeoff", "price_resolution")}
+    return out if any(out.values()) else None
+
+
+def _log_guardrail_event(reason: str, thread_id: str,
+                         property_key_val: str | None) -> None:
+    """Best-effort LangSmith tag when a guardrail blocks a request — the
+    "alert" an estimator can see by checking LangSmith traces. No raw
+    email/phone here: thread_id is enough to find the conversation."""
+    if not settings.langsmith_api_key:
+        return
+    try:
+        from langsmith import Client
+        Client(api_key=settings.langsmith_api_key).create_run(
+            name="guardrail_blocked", run_type="chain",
+            project_name=settings.langsmith_project,
+            inputs={"thread_id": thread_id, "property_key": property_key_val},
+            outputs={"reason": reason},
+            tags=["guardrail_blocked", f"reason={reason}", f"thread={thread_id}"])
+    except Exception:
+        pass
+
+
 def _finish_draft(thread_id: str, contact: dict[str, str] | None) -> None:
-    """Resume the graph interrupted after intake (retrieve -> pricing ->
-    draft) and persist the result for the estimator queue. Runs as a
-    background task — the customer never waits on (or sees) the draft."""
+    """Resume the graph interrupted after intake (codes -> takeoff ->
+    price_fill -> draft) and persist the result for the estimator queue.
+    Runs as a background task — the customer never waits on (or sees) the
+    draft."""
     try:
         state = deps.get_graph().invoke(
             None, {"configurable": {"thread_id": thread_id}})
@@ -92,22 +138,43 @@ def _finish_draft(thread_id: str, contact: dict[str, str] | None) -> None:
     packet = state.get("routing_packet") or {}
     if contact:
         packet = {**packet, "contact": contact}
-    deps.get_store().create_draft(thread_id, state["draft"], packet or None)
+    contact = contact or {}
+    slots = state.get("slots", {})
+    deps.get_store().create_draft(
+        thread_id, state["draft"], packet or None,
+        stage_outputs=_stage_outputs(state),
+        contact_email=normalize_email(contact.get("email")),
+        contact_phone=normalize_phone(contact.get("phone")),
+        property_key=property_key(slots.get("scope"), slots.get("property_location")))
 
 
 @app.post("/chat")
 def chat(body: ChatIn, background: BackgroundTasks):
     """One customer intake turn. When the turn completes intake, the graph is
     paused before retrieval and the reply returns immediately — drafting
-    finishes in the background and lands in the review queue."""
+    finishes in the background and lands in the review queue. A duplicate-
+    quote guardrail check runs first (same property already active, or this
+    contact starting too many properties too fast) — a blocked request skips
+    drafting entirely rather than spending LLM/Tavily budget on a draft that
+    would just get discarded."""
     state = deps.get_graph().invoke(
         {"messages": [HumanMessage(body.message)]},
         {"configurable": {"thread_id": body.thread_id}},
-        interrupt_before=["retrieve"])
-    if state.get("_action") == "complete":
-        background.add_task(_finish_draft, body.thread_id, body.contact)
+        interrupt_before=["codes"])
+    action = state.get("_action")
+    if action == "complete":
+        slots = state.get("slots", {})
+        reason = check_duplicate(deps.get_store(), slots, body.contact)
+        if reason:
+            _log_guardrail_event(reason, body.thread_id,
+                                 property_key(slots.get("scope"),
+                                             slots.get("property_location")))
+            action = ("duplicate_blocked" if reason == "duplicate_property"
+                      else "rate_limited")
+        else:
+            background.add_task(_finish_draft, body.thread_id, body.contact)
     return {"reply": state["messages"][-1].content,
-            "action": state.get("_action"),
+            "action": action,
             "trigger_level": (state.get("trigger") or {}).get("level"),
             "routing_packet": state.get("routing_packet"),
             "quote_id": None}
@@ -180,5 +247,11 @@ def revise_quote(quote_id: int, body: ReviseIn):
     prev_contact = (row.get("routing_packet") or {}).get("contact")
     if prev_contact:
         packet = {**packet, "contact": prev_contact}
-    return store.create_draft(row["thread_id"], state["draft"],
-                              packet or None)
+    # Same thread/job as the row being revised — carry its identity columns
+    # forward rather than recomputing (intake doesn't re-run on a revision).
+    return store.create_draft(
+        row["thread_id"], state["draft"], packet or None,
+        stage_outputs=_stage_outputs(state),
+        contact_email=row.get("contact_email"),
+        contact_phone=row.get("contact_phone"),
+        property_key=row.get("property_key"))

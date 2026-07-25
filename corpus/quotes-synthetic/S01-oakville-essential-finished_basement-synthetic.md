@@ -6,6 +6,7 @@ city: 'Oakville'
 street: 'Alfred Hughes Ave'
 package_tier: 'ESSENTIAL'
 scope: 'finished_basement'
+gfa_sqft: 1563
 revised: false
 synthetic: true
 paired_with: 'P19'
@@ -20,22 +21,11 @@ CONSTRUCTION PROPOSAL
 FINISHED BASEMENT
 COMPANY A'S ESSENTIAL PACKAGE
 
-AGREEMENT OF SERVICES
-This agreement is made between Company A (the "Contractor") and the Client. The Contractor agrees to provide labor and materials necessary for the work outlined in the Scope of Work section below. The estimate provided is based on information supplied by the Client, site visit assessments, and the assumption that any prior work was completed in accordance with standard building practices. Any unforeseen conditions requiring changes to the original scope of work will necessitate a work order and will be billed accordingly. All work will be performed in compliance with the Ontario Building Code and any applicable City/Town Approved Permits (if required).
 
-[CLIENT]
-[EMAIL]
-[NO] Alfred Hughes Ave, Oakville [POSTAL_CODE]
-(the "Client")
-
-CHANGE ORDER POLICY
-All changes to the project must be approved and signed off by both the project manager and the Client. Client must not communicate changes directly to sub-trades or field staff. Change orders requested after finishes have been finalized or after scheduled work has commenced will incur an administrative fee of up to $500 per change order.
 
 EXCLUSIONS
 The Client is responsible for all fees and costs associated with code compliance, including but not limited to: permits, minor variance approvals, municipal parking fees.
 
-WARRANTY
-Company A provides a One-Year Service Warranty on all installations.
 
 SCOPE OF WORK
 WORK DESCRIPTION: Finished Basement Makeover approximately GFA – 1563 SQFT

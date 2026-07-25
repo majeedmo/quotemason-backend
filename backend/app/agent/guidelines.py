@@ -12,16 +12,19 @@ from __future__ import annotations
 import re
 from functools import lru_cache
 
-from app.config import CORPUS_DIR
-
-GUIDELINE_DOC = CORPUS_DIR / "guidelines" / "builder-guidelines-DRAFT-v0.md"
+from app.contractor import get_contractor
 
 _QUOTED = re.compile(r"[\"“]([^\"”]+)[\"”]")
 
 
+def guideline_doc():
+    """This contractor's guideline doc (path from the contractor profile)."""
+    return get_contractor().guideline_doc
+
+
 @lru_cache(maxsize=1)
 def _text() -> str:
-    return GUIDELINE_DOC.read_text()
+    return guideline_doc().read_text()
 
 
 @lru_cache(maxsize=8)
@@ -30,7 +33,7 @@ def section(num: str) -> str:
     hashes = "##" if "." not in num else "###"
     m = re.search(rf"^{hashes} {re.escape(num)}[. ].*?$", _text(), re.M)
     if not m:
-        raise KeyError(f"section {num} not found in {GUIDELINE_DOC.name}")
+        raise KeyError(f"section {num} not found in {guideline_doc().name}")
     rest = _text()[m.start():]
     nxt = re.search(rf"^#{{2,{len(hashes)}}} ", rest[m.end() - m.start():], re.M)
     return rest[: (m.end() - m.start()) + nxt.start()] if nxt else rest

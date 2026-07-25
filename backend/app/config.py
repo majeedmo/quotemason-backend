@@ -11,6 +11,22 @@ CORPUS_DIR = REPO_DIR / "corpus"
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=BACKEND_DIR / ".env", extra="ignore")
 
+    # The contractor this deployment serves. One process = one contractor;
+    # a second contractor is a config + data exercise (own guidelines/quotes
+    # ingested under their contractor_id), never a code change.
+    contractor_id: str = "company-a"
+    contractor_name: str = "Company A"          # internal name (guideline vocabulary)
+    brand_name: str = "Maplewood Renovations"   # client-facing brand
+    zoning_jurisdiction: str = "cambridge"
+    price_staleness_days: int = 90
+
+    # Duplicate-quote guardrails (see backend/app/guardrails.py). A quote for
+    # the same property is "still active" for this many days; the same
+    # contact (email/phone) can start quotes for at most this many distinct
+    # properties within that same window.
+    quote_expiry_days: int = 90
+    max_quotes_per_contact_window: int = 3
+
     openai_api_key: str = ""
     embedding_model: str = "text-embedding-3-small"
 
@@ -40,6 +56,13 @@ class Settings(BaseSettings):
     # server by default — 3001 included because Next falls back to it when
     # 3000 is already taken; add the Vercel URL for the deploy).
     cors_origins: str = "http://localhost:3000,http://localhost:3001"
+
+    # Demo-only "Estimator Login" gate in front of the frontend's /dashboard
+    # page. Not real auth — no hashing, no sessions/tokens, no DB table, no
+    # API-level authorization anywhere (deferred for the capstone). Empty
+    # defaults mean /login always 401s until both are set in .env.
+    estimator_demo_user: str = ""
+    estimator_demo_password: str = ""
 
 
 settings = Settings()

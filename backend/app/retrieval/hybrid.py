@@ -25,6 +25,7 @@ from __future__ import annotations
 import re
 from functools import lru_cache
 
+from app.config import settings
 from app.retrieval.retriever import CorpusRetriever, RetrievedChunk
 
 # Keep dotted clause/defined-term identifiers whole: "9.9.10.1" and "26-007"
@@ -38,14 +39,21 @@ def _tokenize(text: str) -> list[str]:
     return _TOKEN.findall(text.lower())
 
 
+def _match_one(metadata: dict, key: str, val) -> bool:
+    """A list/tuple value means "any of these" (mirrors retriever._conditions's
+    MatchAny), else plain equality."""
+    actual = metadata.get(key)
+    return actual in val if isinstance(val, (list, tuple)) else actual == val
+
+
 def _match_meta(metadata: dict, must: dict | None, must_not: dict | None) -> bool:
     """In-Python mirror of the Qdrant filter (`retriever._conditions`): None-valued
     constraints are skipped, `must` is AND, `must_not` excludes on any match."""
     for key, val in (must or {}).items():
-        if val is not None and metadata.get(key) != val:
+        if val is not None and not _match_one(metadata, key, val):
             return False
     for key, val in (must_not or {}).items():
-        if val is not None and metadata.get(key) == val:
+        if val is not None and _match_one(metadata, key, val):
             return False
     return True
 
@@ -119,22 +127,31 @@ class HybridRetriever:
             query, k, must={"doc_type": "building_code", "jurisdiction": "ontario"})
 
     def search_zoning(self, query: str, k: int = 5,
-                      jurisdiction: str = "cambridge") -> list[RetrievedChunk]:
+                      jurisdiction: str | None = None) -> list[RetrievedChunk]:
         return self._hybrid_search(
-            query, k, must={"doc_type": "zoning_bylaw", "jurisdiction": jurisdiction})
+            query, k, must={"doc_type": "zoning_bylaw",
+                            "jurisdiction": jurisdiction or settings.zoning_jurisdiction})
 
-    def search_guidelines(self, query: str, k: int = 5) -> list[RetrievedChunk]:
-        return self._hybrid_search(query, k, must={"doc_type": "builder_guideline"})
+    def search_guidelines(self, query: str, k: int = 5, *,
+                          contractor_id: str | None = None) -> list[RetrievedChunk]:
+        return self._hybrid_search(query, k, must={
+            "doc_type": "builder_guideline",
+            "contractor_id": contractor_id or settings.contractor_id})
 
     def search_past_quotes(self, query: str, k: int = 5, *,
                            city: str | None = None,
                            package_tier: str | None = None,
                            scope: str | None = None,
-                           include_synthetic: bool = True) -> list[RetrievedChunk]:
+                           include_synthetic: bool = True,
+                           contractor_id: str | None = None,
+                           exclude_project_codes: list[str] | None = None) -> list[RetrievedChunk]:
         must = {"doc_type": "past_project_quote",
+                "contractor_id": contractor_id or settings.contractor_id,
                 "city": city, "package_tier": package_tier, "scope": scope}
-        must_not = None if include_synthetic else {"synthetic": True}
-        return self._hybrid_search(query, k, must=must, must_not=must_not)
+        must_not = {} if include_synthetic else {"synthetic": True}
+        if exclude_project_codes:
+            must_not["project_code"] = list(exclude_project_codes)
+        return self._hybrid_search(query, k, must=must, must_not=must_not or None)
 
 
 @lru_cache(maxsize=1)
