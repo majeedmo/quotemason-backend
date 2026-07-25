@@ -17,13 +17,15 @@ from urllib.parse import quote as _urlquote
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from langchain_core.messages import HumanMessage
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
+from app.agent.nodes import draft_node
 from app.api import deps
 from app.config import settings
 from app.guardrails import check_duplicate, normalize_email, normalize_phone, property_key
+from app.quotes.store import ACTIVE_STATUSES
 
 app = FastAPI(title="QuoteMason API",
               description="Agentic estimation assistant — intake chat and "
@@ -54,6 +56,11 @@ class ReviseIn(BaseModel):
     feedback: str
 
 
+class PriceOverrideIn(BaseModel):
+    price_cad: float = Field(gt=0)
+    note: str | None = None
+
+
 class LoginIn(BaseModel):
     username: str
     password: str
@@ -72,6 +79,25 @@ def _log_edit_to_langsmith(row: dict, edited_md: str) -> None:
                     "draft_md": row["draft_md"]},
             outputs={"estimator_edit_md": edited_md},
             tags=["estimator_edit", f"thread={row['thread_id']}"])
+    except Exception:
+        pass
+
+
+def _log_price_override_to_langsmith(row: dict, takeoff_line_ref: str,
+                                     price_cad: float, note: str | None) -> None:
+    """Same eval-logging contract as _log_edit_to_langsmith, for single-line
+    price overrides."""
+    if not settings.langsmith_api_key:
+        return
+    try:
+        from langsmith import Client
+        Client(api_key=settings.langsmith_api_key).create_run(
+            name="estimator_price_override", run_type="chain",
+            project_name=settings.langsmith_project,
+            inputs={"thread_id": row["thread_id"], "version": row["version"],
+                    "takeoff_line_ref": takeoff_line_ref},
+            outputs={"price_cad": price_cad, "note": note},
+            tags=["estimator_price_override", f"thread={row['thread_id']}"])
     except Exception:
         pass
 
@@ -255,3 +281,78 @@ def revise_quote(quote_id: int, body: ReviseIn):
         contact_email=row.get("contact_email"),
         contact_phone=row.get("contact_phone"),
         property_key=row.get("property_key"))
+
+
+@app.post("/quotes/{quote_id}/lines/{takeoff_line_ref}/price")
+def override_line_price(quote_id: int, takeoff_line_ref: str, body: PriceOverrideIn):
+    """Estimator prices a single line the pipeline couldn't price (capstone
+    scope: only lines still marked price_source "unpriced" are eligible).
+    Unlike /revise, this does NOT re-run codes/takeoff/price_fill -- those
+    would just rebuild price_resolution from scratch and erase the override.
+    Instead it patches the one row in the live checkpointed state and
+    re-invokes draft_node directly, so only the drafting LLM call is spent."""
+    store = deps.get_store()
+    row = store.get(quote_id)
+    if row is None:
+        raise HTTPException(404, "quote not found")
+    if row["status"] not in ACTIVE_STATUSES:
+        raise HTTPException(409, f"quote is {row['status']}, not editable")
+
+    snapshot = deps.get_graph().get_state(
+        {"configurable": {"thread_id": row["thread_id"]}})
+    state = dict(snapshot.values) if snapshot and snapshot.values else {}
+    if not state:
+        raise HTTPException(
+            409, "conversation state no longer available for this quote "
+                 "(checkpointer may have evicted it) -- use /edit or /revise "
+                 "instead")
+
+    price_resolution = state.get("price_resolution") or []
+    matches = [r for r in price_resolution
+              if r.get("takeoff_line_ref") == takeoff_line_ref]
+    if not matches:
+        raise HTTPException(404, "no such takeoff line in this quote")
+    unpriced = [r for r in matches if r.get("price_source") == "unpriced"]
+    if len(unpriced) > 1:
+        raise HTTPException(
+            409, f"ambiguous line: {len(unpriced)} unpriced rows share this "
+                 "reference, cannot determine which to price")
+    if len(unpriced) == 0:
+        raise HTTPException(
+            409, "line is already priced; overriding a priced line isn't "
+                 "supported yet")
+    target = unpriced[0]
+    price_source_before = target.get("price_source", "unpriced")
+
+    qty = target.get("quantity") or 0
+    override_row = {
+        **target,
+        "price_source": "estimator_override",
+        "unit_price_quoted_cad": round(body.price_cad / qty, 2) if qty else None,
+        "extended_quoted_cad": body.price_cad,
+        "source_detail": "estimator-provided price",
+        "note": body.note,
+    }
+    updated_resolution = [
+        override_row if r is target else r for r in price_resolution]
+
+    result = draft_node({**state, "price_resolution": updated_resolution})
+    if not result.get("draft"):
+        raise HTTPException(502, "draft regeneration produced no draft")
+
+    new_row = store.create_draft(
+        row["thread_id"], result["draft"], result.get("routing_packet"),
+        stage_outputs={"codes_checklist": state.get("codes_checklist"),
+                       "takeoff": state.get("takeoff"),
+                       "price_resolution": updated_resolution},
+        contact_email=row.get("contact_email"),
+        contact_phone=row.get("contact_phone"),
+        property_key=row.get("property_key"))
+    store.record_price_override(
+        thread_id=row["thread_id"], takeoff_line_ref=takeoff_line_ref,
+        price_cad=body.price_cad, note=body.note,
+        price_source_before=price_source_before,
+        source_quote_id=quote_id, result_quote_id=new_row["id"])
+    _log_price_override_to_langsmith(row, takeoff_line_ref, body.price_cad,
+                                     body.note)
+    return new_row

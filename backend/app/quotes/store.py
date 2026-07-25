@@ -50,6 +50,23 @@ CREATE INDEX IF NOT EXISTS idx_quote_drafts_contact_email
     ON quote_drafts (contact_email);
 CREATE INDEX IF NOT EXISTS idx_quote_drafts_contact_phone
     ON quote_drafts (contact_phone);
+
+-- Append-only audit log for estimator single-line price overrides (never
+-- updated or deleted) -- the substrate for eval/audit once overrides are
+-- allowed on any line, not just unpriced ones.
+CREATE TABLE IF NOT EXISTS price_overrides (
+    id                  SERIAL PRIMARY KEY,
+    thread_id           TEXT NOT NULL,
+    takeoff_line_ref    TEXT NOT NULL,
+    price_cad           NUMERIC NOT NULL,
+    note                TEXT,
+    price_source_before TEXT NOT NULL,
+    source_quote_id     INTEGER NOT NULL,
+    result_quote_id     INTEGER NOT NULL,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_price_overrides_thread
+    ON price_overrides (thread_id);
 """
 
 # Guardrail queries (find_active_duplicate, count_recent_properties_for_contact)
@@ -154,6 +171,21 @@ class QuoteStore:
                 "status = 'edited', updated_at = now() "
                 "WHERE id = %s AND status = ANY(%s) RETURNING *",
                 (edited_md, quote_id, list(ACTIVE_STATUSES))).fetchone()
+
+    def record_price_override(self, thread_id: str, takeoff_line_ref: str,
+                              price_cad: float, note: str | None,
+                              price_source_before: str, source_quote_id: int,
+                              result_quote_id: int) -> dict[str, Any]:
+        """Append-only audit row for a single-line estimator price override."""
+        with self._conn() as c:
+            return c.execute(
+                "INSERT INTO price_overrides (thread_id, takeoff_line_ref, "
+                "price_cad, note, price_source_before, source_quote_id, "
+                "result_quote_id) VALUES (%s, %s, %s, %s, %s, %s, %s) "
+                "RETURNING *",
+                (thread_id, takeoff_line_ref, price_cad, note,
+                 price_source_before, source_quote_id, result_quote_id),
+            ).fetchone()
 
     def approve(self, quote_id: int) -> dict[str, Any] | None:
         with self._conn() as c:
