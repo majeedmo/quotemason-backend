@@ -13,7 +13,7 @@ from langchain_core.messages import (AIMessage, HumanMessage, SystemMessage,
 from pydantic import ValidationError
 
 from app.agent import guidelines, prompts, schemas
-from app.agent.llm import codes_model, drafting_model, intake_model
+from app.agent.llm import codes_model, drafting_model, intake_model, takeoff_model
 from app.agent.state import AgentState
 from app.config import settings
 from app.pricing import allowances, labor, materials
@@ -285,7 +285,7 @@ def takeoff_node(state: AgentState) -> dict:
                     s, guidelines.section("4"), comparables,
                     checklist_dict, item_keys, trade_keys, allowance_keys,
                     state.get("estimator_feedback")))]
-        m = drafting_model()
+        m = takeoff_model()
         resp = m.invoke(msgs)
         takeoff = _validated(schemas.Takeoff, resp.content, "lines")
         if takeoff is None:

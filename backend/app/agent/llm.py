@@ -13,6 +13,7 @@ _FALLBACKS = {  # brief, Task 2 model table
     "intake": ["google/gemini-2.5-flash"],
     "codes": ["google/gemini-2.5-flash"],
     "drafting": ["openai/gpt-5.1"],
+    "takeoff": ["google/gemini-2.5-flash"],
 }
 
 
@@ -39,3 +40,15 @@ def codes_model() -> ChatOpenAI:
 
 def drafting_model() -> ChatOpenAI:
     return _chat(settings.drafting_model, "drafting", temperature=0.3)
+
+
+def takeoff_model() -> ChatOpenAI:
+    """Cost experiment 2026-07-25: cheaper model for the takeoff stage only
+    -- structured quantity extraction, arguably not requiring the top-tier
+    model draft_node's client-facing prose does. Own settings.takeoff_model
+    (currently the same value as intake_model, but independently
+    configurable -- takeoff's accuracy/cost trade-off is its own decision,
+    not tied to whatever intake happens to run on). Validated against the
+    quote-accuracy eval before trusting it (see docs/capstone-progress.md);
+    draft stays on drafting_model regardless."""
+    return _chat(settings.takeoff_model, "takeoff", temperature=0.1)
