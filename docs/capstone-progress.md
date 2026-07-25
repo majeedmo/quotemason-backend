@@ -6,7 +6,7 @@
 
 - **`main`** — the graded submission. Last commit `d5f7de9`. **Do not merge into `main` until the user confirms grading is complete.**
 - **`develop`** — active capstone branch. 19 PRs merged since the submission (`#6`–`#19`, following the submission's own PR numbering), plus PR #20 (duplicate-quote guardrails) open. All work happens on feature branches off `develop`, one PR per change, merged only on explicit go-ahead — same workflow as the original submission.
-- Current test suite: **150 passed, 1 skipped**, no network required (`cd backend && uv run pytest`).
+- Current test suite: **155 passed, 1 skipped**, no network required (`cd backend && uv run pytest`).
 
 ## `submission.md` §7.2's four capstone items — status
 
@@ -28,6 +28,43 @@ The user identified additional problems on re-reviewing the submitted architectu
 - **3-stage traceable drafting pipeline** — `codes → takeoff → price_fill → draft` replacing the single drafting call, with a full `CodeItem ↔ TakeoffLine ↔ price_resolution` traceability chain so every dollar and every triggered code item can be followed back to its source (PR #9)
 - **Point-estimate pricing policy** — job-size-band interpolation for labor rates, midpoint-of-range for materials/allowances (no size axis), tier-allowance wiring into `price_fill_node` (PRs #9, #13)
 - **Corpus cleanup** — trimmed redundant legal/marketing boilerplate from past-quote text, extracted GFA into frontmatter/chunk metadata, re-ingested to Qdrant Cloud with zero retrieval regression (PR #12)
+
+## Known characteristics (investigated, not a bug)
+
+- **Complex jobs take minutes to draft, synchronously.** A legal-basement-apartment
+  full-conversion request (quote #22, thread `web-20c418c7-ce23`, 2026-07-25) took
+  ~8.5 min end-to-end in the `_finish_draft` background task before appearing in
+  the estimator queue. Traced in LangSmith: `codes` 43s, `takeoff` 289s, `price_fill`
+  5s (no LLM), `draft` 176s. The two slow stages are each a single non-streamed
+  `ChatOpenAI` completion — 30,856 and 19,720 completion tokens respectively — not
+  a hang, retry loop, or bad OpenRouter routing. Checked against 431 historical LLM
+  calls: duration scales linearly with completion tokens (~100-110 tok/s) all the
+  way up this list, so it's reproducible for any job that triggers this much
+  code/takeoff detail, not a one-off. `app/agent/llm.py`'s `ChatOpenAI` clients have
+  no explicit `timeout`, so a call that actually hung (vs. merely being large) would
+  wait indefinitely rather than failing over to the OpenRouter fallback model.
+  No fix requested yet — noting here so the next time this comes up we don't
+  re-diagnose from scratch.
+
+## Bugs found and fixed since the last update
+
+- **Silent material-price loss on category-name mismatch (quote #22, 2026-07-25).**
+  Auditing quote #22's 5 unpriced line items turned up 3 different causes, only
+  one of which was an actual bug: (a) two were genuine price-sheet gaps
+  (no exterior/entrance-door item on the sheet; `stairs/finish` is spec-only at
+  every tier with no material fallback category) — real gaps, not fixed;
+  (b) two were smoke-alarm code-compliance lines the takeoff model correctly
+  bundled into `electrical_rough_and_finish` (`$0` by design) but
+  `price_fill_node` mislabels them "estimator to price" same as a real gap —
+  cosmetic, not fixed; (c) **interior paint material (~$2,700) was silently
+  dropped** because the takeoff model wrote takeoff-line category `"painting"`
+  while the sheet's real category is `"paint"` — an exact-match miss on
+  `materials.lookup()` even though `(paint, interior_paint)` was on the sheet
+  the whole time. Fixed: `materials.lookup()` now falls back to an
+  item-name-only match when the exact `(category, item)` pair misses and the
+  item name is unambiguous across the sheet (mirrors the existing tolerance
+  for the takeoff model echoing `"category/item"` into the item field).
+  Regression tests in `test_material_prices.py`.
 
 ## What's left
 
