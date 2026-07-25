@@ -57,6 +57,13 @@ class Settings(BaseSettings):
     # 3000 is already taken; add the Vercel URL for the deploy).
     cors_origins: str = "http://localhost:3000,http://localhost:3001"
 
+    # Demo-only "Estimator Login" gate in front of the frontend's /dashboard
+    # page. Not real auth — no hashing, no sessions/tokens, no DB table, no
+    # API-level authorization anywhere (deferred for the capstone). Empty
+    # defaults mean /login always 401s until both are set in .env.
+    estimator_demo_user: str = ""
+    estimator_demo_password: str = ""
+
 
 settings = Settings()
 
