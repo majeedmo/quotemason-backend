@@ -222,6 +222,10 @@ CSV) rather than emitting a bare number — reserve "estimator to price" for lin
 allowance, comparable, or price check can ground. Contract-policy amounts — deposit, \
 milestone balances, portable toilet, change-order admin fees — cite their §5 rule; this applies \
 to the allowances table, milestone schedule, and totals too, not just line items.
+- Rows with price_source "estimator_override" are the reviewing estimator's own price for a \
+line the pipeline couldn't price — quote its "extended_quoted_cad" and cite the source as \
+"estimator-provided price" (plus the row's note if present); never present it as a price-sheet \
+or web-check result.
 - Any price_resolution row with "rate_unverified": true must be marked "rate unverified" \
 (the owner hasn't confirmed that rate yet). Any row with "site_dependent": true is quoted as a \
 range with "confirm on-site before finalizing" — that rate is confirmed but conditions \

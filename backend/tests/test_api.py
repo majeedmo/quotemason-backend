@@ -16,6 +16,7 @@ class FakeStore:
     def __init__(self):
         self.rows: dict[int, dict] = {}
         self._id = 0
+        self.price_overrides: list[dict] = []
 
     def create_draft(self, thread_id, draft_md, routing_packet=None,
                      stage_outputs=None, contact_email=None,
@@ -72,6 +73,17 @@ class FakeStore:
         r["status"] = "approved"
         return r
 
+    def record_price_override(self, thread_id, takeoff_line_ref, price_cad,
+                              note, price_source_before, source_quote_id,
+                              result_quote_id):
+        row = {"thread_id": thread_id, "takeoff_line_ref": takeoff_line_ref,
+               "price_cad": price_cad, "note": note,
+               "price_source_before": price_source_before,
+               "source_quote_id": source_quote_id,
+               "result_quote_id": result_quote_id}
+        self.price_overrides.append(row)
+        return row
+
 
 class FakeGraph:
     def __init__(self, state):
@@ -81,6 +93,9 @@ class FakeGraph:
     def invoke(self, payload, config, **kwargs):
         self.calls.append((payload, config, kwargs))
         return self.state
+
+    def get_state(self, config):
+        return type("FakeSnapshot", (), {"values": self.state})()
 
 
 @pytest.fixture
@@ -256,3 +271,113 @@ def test_revise_missing_and_terminal(api, monkeypatch):
     api.post("/chat", json={"thread_id": "t1", "message": "spec"})
     api.post("/quotes/1/approve")
     assert api.post("/quotes/1/revise", json={"feedback": "x"}).status_code == 409
+
+
+UNPRICED_STATE = {**DRAFT_STATE,
+                  "price_resolution": [
+                      {"category": "plumbing", "quantity": 1, "unit": "ea",
+                       "takeoff_line_ref": "t1", "price_source": "unpriced",
+                       "note": "no material or labor key on this line — "
+                               "estimator to price"},
+                  ]}
+
+
+def _fake_draft_node(monkeypatch, captured, draft_md="# Quote v2 priced"):
+    def fake(state):
+        captured["price_resolution"] = state["price_resolution"]
+        return {"draft": draft_md, "routing_packet": None}
+    monkeypatch.setattr("app.api.main.draft_node", fake)
+
+
+def test_override_price_creates_new_version(api, monkeypatch):
+    """A price override does NOT go through graph.invoke (that would rebuild
+    price_resolution from scratch and erase the override) -- it reads live
+    state via graph.get_state and calls draft_node directly."""
+    _set_graph(monkeypatch, UNPRICED_STATE)
+    api.post("/chat", json={"thread_id": "t1", "message": "spec"})
+
+    captured = {}
+    _fake_draft_node(monkeypatch, captured)
+    out = api.post("/quotes/1/lines/t1/price",
+                   json={"price_cad": 450, "note": "site visit quote"})
+    assert out.status_code == 200
+    row = out.json()
+    assert (row["version"], row["draft_md"]) == (2, "# Quote v2 priced")
+
+    overridden = captured["price_resolution"][0]
+    assert overridden["price_source"] == "estimator_override"
+    assert overridden["extended_quoted_cad"] == 450
+    assert overridden["unit_price_quoted_cad"] == 450.0
+    assert overridden["note"] == "site visit quote"
+    assert row["stage_outputs"]["price_resolution"][0]["price_source"] == "estimator_override"
+
+    # old version superseded, audit row recorded
+    assert api.get("/quotes/1").json()["status"] == "superseded"
+    audit = api.fake_store.price_overrides[0]
+    assert audit == {"thread_id": "t1", "takeoff_line_ref": "t1",
+                     "price_cad": 450, "note": "site visit quote",
+                     "price_source_before": "unpriced",
+                     "source_quote_id": 1, "result_quote_id": 2}
+
+
+def test_override_price_missing_quote(api, monkeypatch):
+    _set_graph(monkeypatch, UNPRICED_STATE)
+    assert api.post("/quotes/9/lines/t1/price",
+                    json={"price_cad": 10}).status_code == 404
+
+
+def test_override_price_terminal_quote_rejected(api, monkeypatch):
+    _set_graph(monkeypatch, UNPRICED_STATE)
+    api.post("/chat", json={"thread_id": "t1", "message": "spec"})
+    api.post("/quotes/1/approve")
+    assert api.post("/quotes/1/lines/t1/price",
+                    json={"price_cad": 10}).status_code == 409
+
+
+def test_override_price_unknown_line_ref(api, monkeypatch):
+    _set_graph(monkeypatch, UNPRICED_STATE)
+    api.post("/chat", json={"thread_id": "t1", "message": "spec"})
+    assert api.post("/quotes/1/lines/does-not-exist/price",
+                    json={"price_cad": 10}).status_code == 404
+
+
+def test_override_price_already_priced_line_rejected(api, monkeypatch):
+    """Capstone scope: only lines still marked 'unpriced' are eligible --
+    this is the one guard clause to relax when overrides open up to any
+    line."""
+    priced_state = {**DRAFT_STATE,
+                    "price_resolution": [
+                        {"category": "flooring", "item": "lvp", "quantity": 900,
+                         "unit": "sqft", "takeoff_line_ref": "t1",
+                         "price_source": "price_sheet"},
+                    ]}
+    _set_graph(monkeypatch, priced_state)
+    api.post("/chat", json={"thread_id": "t1", "message": "spec"})
+    assert api.post("/quotes/1/lines/t1/price",
+                    json={"price_cad": 10}).status_code == 409
+
+
+def test_override_price_ambiguous_unpriced_rows_rejected(api, monkeypatch):
+    ambiguous_state = {**DRAFT_STATE,
+                       "price_resolution": [
+                           {"category": "plumbing", "quantity": 1, "unit": "ea",
+                            "takeoff_line_ref": "t1", "price_source": "unpriced",
+                            "trade": "plumber",
+                            "note": "no labor rate found — estimator to price"},
+                           {"category": "plumbing", "quantity": 1, "unit": "ea",
+                            "takeoff_line_ref": "t1", "price_source": "unpriced",
+                            "allowance_item": "fixture",
+                            "note": "no allowance on file — estimator to price"},
+                       ]}
+    _set_graph(monkeypatch, ambiguous_state)
+    api.post("/chat", json={"thread_id": "t1", "message": "spec"})
+    assert api.post("/quotes/1/lines/t1/price",
+                    json={"price_cad": 10}).status_code == 409
+
+
+def test_override_price_checkpointer_state_unavailable(api, monkeypatch):
+    _set_graph(monkeypatch, UNPRICED_STATE)
+    api.post("/chat", json={"thread_id": "t1", "message": "spec"})
+    _set_graph(monkeypatch, {})
+    assert api.post("/quotes/1/lines/t1/price",
+                    json={"price_cad": 10}).status_code == 409
