@@ -43,9 +43,12 @@ def drafting_model() -> ChatOpenAI:
 
 
 def takeoff_model() -> ChatOpenAI:
-    """Cost experiment 2026-07-25: cheaper model (same tier as intake/codes)
-    for the takeoff stage only -- structured quantity extraction, arguably
-    not requiring the top-tier model draft_node's client-facing prose does.
-    Validated against the quote-accuracy eval before trusting it (see
-    docs/capstone-progress.md); draft stays on drafting_model regardless."""
-    return _chat(settings.intake_model, "takeoff", temperature=0.1)
+    """Cost experiment 2026-07-25: cheaper model for the takeoff stage only
+    -- structured quantity extraction, arguably not requiring the top-tier
+    model draft_node's client-facing prose does. Own settings.takeoff_model
+    (currently the same value as intake_model, but independently
+    configurable -- takeoff's accuracy/cost trade-off is its own decision,
+    not tied to whatever intake happens to run on). Validated against the
+    quote-accuracy eval before trusting it (see docs/capstone-progress.md);
+    draft stays on drafting_model regardless."""
+    return _chat(settings.takeoff_model, "takeoff", temperature=0.1)
