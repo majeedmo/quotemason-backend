@@ -109,6 +109,28 @@ DRAFT_STATE = {"messages": [type("M", (), {"content": "Draft attached"})()],
                                      "price_source": "price_sheet"}]}
 
 
+def test_login_ok(api, monkeypatch):
+    monkeypatch.setattr(settings, "estimator_demo_user", "demo")
+    monkeypatch.setattr(settings, "estimator_demo_password", "demo123")
+    r = api.post("/login", json={"username": "demo", "password": "demo123"})
+    assert r.status_code == 200
+    assert r.json() == {"ok": True}
+
+
+def test_login_wrong_password(api, monkeypatch):
+    monkeypatch.setattr(settings, "estimator_demo_user", "demo")
+    monkeypatch.setattr(settings, "estimator_demo_password", "demo123")
+    r = api.post("/login", json={"username": "demo", "password": "nope"})
+    assert r.status_code == 401
+
+
+def test_login_unset_credentials_fails_closed(api, monkeypatch):
+    monkeypatch.setattr(settings, "estimator_demo_user", "")
+    monkeypatch.setattr(settings, "estimator_demo_password", "")
+    r = api.post("/login", json={"username": "", "password": ""})
+    assert r.status_code == 401
+
+
 def test_chat_complete_persists_draft(api, monkeypatch):
     """Intake completion replies immediately (no quote_id yet) and the
     background task resumes the interrupted graph and persists the draft

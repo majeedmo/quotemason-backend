@@ -54,6 +54,11 @@ class ReviseIn(BaseModel):
     feedback: str
 
 
+class LoginIn(BaseModel):
+    username: str
+    password: str
+
+
 def _log_edit_to_langsmith(row: dict, edited_md: str) -> None:
     """Estimator edits are labeled eval data (brief, Task 5/6). Best-effort."""
     if not settings.langsmith_api_key:
@@ -73,6 +78,18 @@ def _log_edit_to_langsmith(row: dict, edited_md: str) -> None:
 
 @app.get("/healthz")
 def healthz():
+    return {"ok": True}
+
+
+@app.post("/login")
+def login(body: LoginIn):
+    """Demo-only gate for the frontend's /dashboard — not real auth (see
+    Settings.estimator_demo_user/password). No session/token issued; the
+    frontend just flips a sessionStorage flag on success."""
+    if (body.username != settings.estimator_demo_user
+            or body.password != settings.estimator_demo_password
+            or not settings.estimator_demo_user):
+        raise HTTPException(401, "invalid username or password")
     return {"ok": True}
 
 
