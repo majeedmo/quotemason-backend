@@ -226,7 +226,7 @@ def test_takeoff_node_filters_comparables_by_tier_and_validates(monkeypatch):
                    "source": "guideline_s4", "comparable_ref": ""}],
         "assumptions": ["subfloor assumed level"]})
     model = _FakeStageModel(SimpleNamespace(content=takeoff_json))
-    monkeypatch.setattr(nodes, "drafting_model", lambda: model)
+    monkeypatch.setattr(nodes, "takeoff_model", lambda: model)
     out = takeoff_node({"slots": {"scope": "finished basement",
                                   "gfa_sqft": 900,
                                   "package_tier_budget": "superior, ~80k"},
@@ -244,7 +244,7 @@ def test_takeoff_node_passes_eval_exclusion_hook_when_present(monkeypatch):
     search_past_quotes so leave-one-out retrieval actually excludes."""
     fake = _patch_stage_retrievers(monkeypatch)
     takeoff_json = json.dumps({"gfa_sqft": 900, "lines": [], "assumptions": []})
-    monkeypatch.setattr(nodes, "drafting_model", lambda: _FakeStageModel(
+    monkeypatch.setattr(nodes, "takeoff_model", lambda: _FakeStageModel(
         SimpleNamespace(content=takeoff_json)))
     takeoff_node({"slots": {"scope": "basement"}, "codes_checklist": {"items": []},
                  "_eval_exclude_project_codes": ["P19", "S01"]})
@@ -252,7 +252,7 @@ def test_takeoff_node_passes_eval_exclusion_hook_when_present(monkeypatch):
     assert quote_call["exclude_project_codes"] == ["P19", "S01"]
 
     fake2 = _patch_stage_retrievers(monkeypatch)
-    monkeypatch.setattr(nodes, "drafting_model", lambda: _FakeStageModel(
+    monkeypatch.setattr(nodes, "takeoff_model", lambda: _FakeStageModel(
         SimpleNamespace(content=takeoff_json)))
     takeoff_node({"slots": {"scope": "basement"}, "codes_checklist": {"items": []}})
     quote_call2 = next(kw for n, kw in fake2.calls if n == "quotes")
@@ -263,7 +263,7 @@ def test_takeoff_node_degrades_to_none_on_unparseable_output(monkeypatch):
     _patch_stage_retrievers(monkeypatch)
     model = _FakeStageModel(SimpleNamespace(content="no json"),
                             SimpleNamespace(content="still no json"))
-    monkeypatch.setattr(nodes, "drafting_model", lambda: model)
+    monkeypatch.setattr(nodes, "takeoff_model", lambda: model)
     out = takeoff_node({"slots": {"scope": "basement"}})
     assert out["takeoff"] is None
 
@@ -591,7 +591,7 @@ def test_takeoff_node_injects_synthetic_line_for_uncovered_mandatory_code_item(m
     # the model's takeoff omits any line referencing the mandatory code item
     takeoff_json = json.dumps({"gfa_sqft": 900, "lines": [], "assumptions": []})
     model = _FakeStageModel(SimpleNamespace(content=takeoff_json))
-    monkeypatch.setattr(nodes, "drafting_model", lambda: model)
+    monkeypatch.setattr(nodes, "takeoff_model", lambda: model)
     checklist = {"items": [{"id": "c1", "requirement": "egress window",
                             "citation": "OBC 9.9.10.1", "doc_type": "building_code",
                             "action": "line_item"}]}
@@ -611,7 +611,7 @@ def test_takeoff_node_no_injection_when_code_item_covered(monkeypatch):
          "unit": "each", "source": "code_item", "code_item_ref": "c1"}],
         "assumptions": []})
     model = _FakeStageModel(SimpleNamespace(content=takeoff_json))
-    monkeypatch.setattr(nodes, "drafting_model", lambda: model)
+    monkeypatch.setattr(nodes, "takeoff_model", lambda: model)
     checklist = {"items": [{"id": "c1", "requirement": "egress window",
                             "citation": "OBC 9.9.10.1", "doc_type": "building_code",
                             "action": "line_item"}]}
@@ -666,6 +666,7 @@ def test_graph_revision_entry_skips_intake(monkeypatch):
             last = msgs[-1]
             seen["last_user"] = last[1] if isinstance(last, tuple) else last.content
             return SimpleNamespace(content="# Quote v2")
+    monkeypatch.setattr(nodes, "takeoff_model", lambda: _FakeDrafter())
     monkeypatch.setattr(nodes, "drafting_model", lambda: _FakeDrafter())
 
     g = build_graph(checkpointer=InMemorySaver())
