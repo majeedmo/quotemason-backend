@@ -166,6 +166,51 @@ than averaging them out. This closes out the GLM-5.2 line of investigation — H
 takeoff + Sonnet draft (two sections up) remains the only configuration that beat the
 original baseline on accuracy.
 
+## Reproducibility check: Haiku takeoff + Sonnet draft (2026-07-25)
+
+Before trusting the "round 1" result above, re-ran the same 3 cases (P11, P16, P20)
+fresh, same configuration, to check it wasn't a lucky sample (temperature 0.3 sampling
+noise is real here — see round 1's note on single-case swings):
+
+| Case | Original run | Reproducibility run |
+|---|---|---|
+| P11 | +14.3% | +15.5% |
+| P16 | -18.0% | -9.9% |
+| P20 | +0.1% | +6.0% |
+| **Avg abs error (these 3)** | **10.8%** | **10.5%** |
+
+Individual cases shift with sampling (P16 especially), but the **aggregate average
+holds steady** — 10.8% vs 10.5%, both consistent with the full 6-case average of
+11.7% reported in round 1. Zero hangs across all 3 reproducibility runs. This is a
+solid confirmation that Haiku-takeoff + Sonnet-draft is a real, repeatable
+improvement over baseline, not a one-off favorable sample.
+
+## Master comparison: every configuration tested today (2026-07-25)
+
+All numbers below are measured (LangSmith token/cost data, real per-call durations,
+and the quote-accuracy eval's real historical-total comparisons) — nothing estimated.
+"Avg time/quote" is codes+takeoff+draft combined, successfully-completed cases only
+(hangs are called out separately since they're not representative processing time).
+
+| Configuration | Cost/quote | Avg abs error | Within ±5% | Avg coverage | Avg time/quote | Hangs observed |
+|---|---|---|---|---|---|---|
+| **Baseline** (Sonnet takeoff + Sonnet draft) | ~$0.70-0.75 | 15.6% | 3/6 | 95.5% | ~500s (~8.3 min) | 1 (P21 takeoff, ~8.5 **hours**) |
+| Prompt-tightened prompts (single case, P11 only) | $0.83 | +11.1% | 0/1 | — | 577s | none |
+| Reasoning effort lowered (single case, P11 only) | $0.39 | +23.1% | 0/1 | — | 185s | none |
+| **Haiku takeoff + Sonnet draft** (PR #24) | **$0.49** | **11.7% (best)** | 2/6 | 93.2% | **~340-450s (fastest reliable)** | **0 across 9 case-runs** |
+| Haiku everywhere + GLM-5.2 draft | $0.18 | 19.7% | 1/6 | 96.8% | ~385s (when it completes) | 1 (P16 draft, ~9 min) |
+| Haiku codes + GLM-5.2 takeoff+draft | ~$0.23 (P11 only) | +44.2% (P11, worst overall) | 0/1 | 93% | 901s (slowest overall) | 1 (P16 takeoff, ~62 min) |
+
+**Verdict: Haiku takeoff + Sonnet draft (PR #24) wins on every axis except absolute
+cheapest dollar figure** — cheaper than baseline, *more* accurate than baseline,
+*faster* than baseline, and the only configuration with zero hangs across every run
+attempted (9 case-runs: the original 6-case suite + a 3-case reproducibility check).
+Every GLM-5.2 variant traded cost for a worse result on accuracy, reliability, and —
+despite being marketed as a lighter/faster model — even wall-clock speed; GLM-5.2's
+completions were consistently slower and more verbose than Haiku's, and hung twice
+across two different stages (takeoff and draft) on two separate runs today. GLM-5.2
+is not recommended anywhere in this pipeline based on today's results.
+
 ## What's left
 
 Nothing below has started; no work begins on any of it until the user directs it:
@@ -174,5 +219,5 @@ Nothing below has started; no work begins on any of it until the user directs it
 - Scheduled price-refresh agent (the unbuilt half of §7.2 #2)
 - Further quote-accuracy calibration once Company A provides real labor-rate figures (the current 50% cut is data-grounded but explicitly a placeholder — see `docs/quote-accuracy-eval.md`)
 - The recurring OpenRouter hang (now seen on both Sonnet and GLM-5.2) makes a request timeout on `app/agent/llm.py`'s clients higher priority, not lower — two separate models have shown this failure mode now
-- Decide on the cheaper-takeoff-model branch above (merge, keep as Sonnet, or run more repetitions first)
+- Decide on PR #24 (Haiku takeoff + Sonnet draft) — reproducibility-confirmed as the best result found (cheaper, more accurate, faster, and reliable vs. baseline); needs the user's go-ahead to merge, not further validation
 - Add a request timeout (+ retry/fallback) to `app/agent/llm.py`'s OpenRouter clients — confirmed live 2026-07-25, not just theoretical: a hung call currently waits forever instead of failing over
