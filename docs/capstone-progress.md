@@ -100,15 +100,41 @@ on a second full 6-case run — only the missing 6th case was re-run standalone.
 is the same timeout gap noted in "Known characteristics" above, now confirmed as a
 real (not just theoretical) failure mode.
 
-**Status: implemented on this branch (`app/agent/nodes.py` takeoff_node now calls a
-new `takeoff_model()` factory instead of `drafting_model()`), tests updated, but NOT
-merged.** This is a real accuracy/cost trade-off on the system's core value
-proposition (quote accuracy) — a judgment call for the user, not something to
-auto-ship on a favorable-looking average. Needs a decision: keep on Sonnet for
-takeoff, adopt the cheaper model, or investigate further (e.g. more repeated runs per
-case — LLM sampling noise is large enough here, per the single-case P11 numbers
-swinging from -0.4% to +23% run-to-run at temperature 0.3, that a single 6-case pass
-per condition is suggestive, not conclusive).
+**Status: MERGED (PR #24, `5bfe8d2`).** `app/agent/nodes.py`'s `takeoff_node` now
+calls a dedicated `takeoff_model()` factory (own `TAKEOFF_MODEL` setting, currently
+`claude-haiku-4.5`) instead of reusing `drafting_model()`. This was a real
+accuracy/cost trade-off on the system's core value proposition (quote accuracy), not
+an auto-ship-on-a-favorable-average call — decided by the user after reviewing the
+mixed eval result above. See the real-world validation below for confirmation against
+live post-merge quotes.
+
+### Real-world validation: quotes #22–#24 (2026-07-25)
+
+Three actual production quotes drafted the same day, pulled from LangSmith traces
+(OpenRouter live pricing × actual token counts, chain-level start/end timestamps for
+per-stage compute time). #22 and #23 both predate the takeoff-model merge (`takeoff`
+still on Sonnet-5); #24 is the first real quote drafted after it merged:
+
+| Stage | #22 (thread `web-20c418c7-ce23`) | #23 (thread `web-62c815b2-ff8e`) | #24 (thread `web-201aac58-44d8`) |
+|---|---|---|---|
+| intake | 4.32s | 17.85s | 10.97s |
+| codes | 42.61s | 30.69s | 24.86s |
+| takeoff | 288.59s (Sonnet-5) | 169.23s (Sonnet-5) | 34.99s (**Haiku-4.5**) |
+| price_fill (no LLM) | 5.09s | 6.12s | 4.95s |
+| draft | 176.27s | 241.83s | 297.39s |
+| **Compute time** | **516.88s (8m 37s)** | **465.72s (7m 46s)** | **373.15s (6m 13s)** |
+| **Wall clock** | 518.92s (8m 39s) | 595.74s (9m 56s) | 416.67s (6m 57s) |
+| **Cost** | **$0.7340** | **$0.5970** | **$0.4473** |
+
+#24 is both the cheapest and fastest of the three: 39% cheaper than #22, 25% cheaper
+than #23, and 2–3.5 minutes faster on compute time — almost entirely the
+Haiku-takeoff switch (289s/169s → 35s). `draft` time doesn't track completion tokens
+across these three (50,576 → 43,279 → 30,257 tokens, but draft time went 176s →
+242s → 297s) — likely OpenRouter/Sonnet latency variance rather than a real
+regression, worth another look only if it keeps trending up. This matches the
+eval-harness numbers above almost exactly: baseline ~$0.70–0.75/quote vs.
+cheaper-takeoff ~$0.49/quote average — #22/#23 are baseline-era, #24 is the first
+live confirmation of the merged config's real-world cost.
 
 ## What's left
 
@@ -117,5 +143,4 @@ Nothing below has started; no work begins on any of it until the user directs it
 - Estimator authentication (§7.2 #4)
 - Scheduled price-refresh agent (the unbuilt half of §7.2 #2)
 - Further quote-accuracy calibration once Company A provides real labor-rate figures (the current 50% cut is data-grounded but explicitly a placeholder — see `docs/quote-accuracy-eval.md`)
-- Decide on the cheaper-takeoff-model branch above (merge, keep as Sonnet, or run more repetitions first)
 - Add a request timeout (+ retry/fallback) to `app/agent/llm.py`'s OpenRouter clients — confirmed live 2026-07-25, not just theoretical: a hung call currently waits forever instead of failing over
