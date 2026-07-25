@@ -66,6 +66,41 @@ The user identified additional problems on re-reviewing the submitted architectu
   for the takeoff model echoing `"category/item"` into the item field).
   Regression tests in `test_material_prices.py`.
 
+## Cost investigation: LLM spend per quote (2026-07-25, no code shipped)
+
+Quote #22 cost **~$0.74 USD in LLM spend** (OpenRouter live pricing × actual LangSmith
+token counts), ~87% of it the `takeoff`+`draft` Sonnet-5 calls — the same two calls
+responsible for the latency finding above (cost and latency share the same root
+cause: large non-streamed completions). Two cost-reduction ideas were tested via a
+controlled before/after on real project P11 (`qa-p11-essential-accessory-unit`, the
+eval harness's own accuracy check against a real historical total) — **both made
+things worse and were reverted, nothing shipped from this investigation**:
+
+| Approach | Total LLM cost | Accuracy vs. actual historical total |
+|---|---|---|
+| Baseline (original prompts, default reasoning) | $0.75 | **-0.4% — within ±5% tolerance ✓** |
+| Prompt-tightened ("be economical" instructions added to takeoff/draft prompts) | $0.83 (worse) | +11.1% — fail ✗ |
+| Reasoning effort lowered (`reasoning: {"effort": "low"}` on the drafting model via OpenRouter) | $0.39 (48% cheaper) | +23.1% — fail, worse ✗ |
+
+Takeaways:
+- The takeoff/draft prompts' verbosity is mostly **necessary** content, not padding —
+  spot-checked the actual draft against `corpus/guidelines/builder-guidelines-DRAFT-v0.md`
+  and confirmed things that look like flourishes (e.g. the $/sqft "sanity check"
+  paragraph) are actually mandated by §7 of the guideline doc. Asking the model to be
+  more economical didn't reliably cut tokens (takeoff went up even as draft went down)
+  and measurably hurt accuracy on the one case with real ground truth.
+- Reasoning tokens (~12-20% of completion tokens on real quotes, confirmed via each
+  call's `usage_metadata.output_token_details.reasoning`) are **not wasted overhead** —
+  cutting them nearly halved cost but roughly doubled the error rate. They appear to be
+  doing real work stabilizing the arithmetic/cross-checking that the whole
+  quote-accuracy eval effort (§7.2 #1 above) was built to get right.
+- Conclusion: at the current model/prompt configuration, **~$0.74/quote appears to be
+  the real price of the accuracy this system has been calibrated for** — further
+  squeezing cost risks undoing that calibration work. If cost reduction is revisited,
+  it should be tested across the full 6-case eval suite (this was one case) before
+  trusting any result, and framed explicitly as a cost/accuracy trade-off decision,
+  not a free-lunch optimization.
+
 ## What's left
 
 Nothing below has started; no work begins on any of it until the user directs it:
