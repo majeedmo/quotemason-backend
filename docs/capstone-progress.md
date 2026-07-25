@@ -5,7 +5,7 @@
 ## Branch state
 
 - **`main`** — the graded submission. Last commit `d5f7de9`. **Do not merge into `main` until the user confirms grading is complete.**
-- **`develop`** — active capstone branch. 19 PRs merged since the submission (`#6`–`#19`, following the submission's own PR numbering), plus PR #20 (duplicate-quote guardrails) open. All work happens on feature branches off `develop`, one PR per change, merged only on explicit go-ahead — same workflow as the original submission.
+- **`develop`** — active capstone branch. 21 PRs merged since the submission (`#6`–`#21`, following the submission's own PR numbering: duplicate-quote guardrails and the demo estimator login are the latest), plus PR #23 (exterior-door price + category-mismatch pricing fix) open. All work happens on feature branches off `develop`, one PR per change, merged only on explicit go-ahead — same workflow as the original submission.
 - Current test suite: **155 passed, 1 skipped**, no network required (`cd backend && uv run pytest`).
 
 ## `submission.md` §7.2's four capstone items — status
