@@ -13,7 +13,8 @@ from langchain_core.messages import (AIMessage, HumanMessage, SystemMessage,
 from pydantic import ValidationError
 
 from app.agent import guidelines, prompts, schemas
-from app.agent.llm import codes_model, drafting_model, intake_model, takeoff_model
+from app.agent.llm import (codes_model, drafting_model, intake_model,
+                          takeoff_model, takeoff_verifier_model)
 from app.agent.state import AgentState
 from app.config import settings
 from app.pricing import allowances, labor, materials
@@ -236,7 +237,16 @@ def codes_node(state: AgentState) -> dict:
     zoning = rows_for("zoning_bylaw")
     if zoning:
         retrieved["zoning_bylaw"] = zoning
-    return {"codes_checklist": checklist.model_dump(), "retrieved": retrieved}
+    return {"codes_checklist": checklist.model_dump(), "retrieved": retrieved,
+            # codes_node always precedes the FIRST takeoff attempt of a
+            # top-level pipeline invocation (fresh intake or a /revise); the
+            # verify_takeoff retry loop itself goes takeoff -> verify_takeoff
+            # -> takeoff directly without passing back through here -- so
+            # this reset fires exactly once per invocation. Without it, a
+            # /revise on an already-flagged thread could inherit a stale
+            # attempt count from the checkpointer and skip the retry it
+            # should get.
+            "takeoff_issues": [], "takeoff_verify_attempts": 0}
 
 
 def _enforce_code_coverage(takeoff: schemas.Takeoff,
@@ -279,12 +289,15 @@ def takeoff_node(state: AgentState) -> dict:
     allowance_keys = sorted(f"{c}/{i}" for c, i in allowances.load_allowances())
     checklist_dict = state.get("codes_checklist") or {}
     takeoff = None
+    prior_issues = state.get("takeoff_issues")
+    verifier_feedback = ({"issues": prior_issues, "previous_takeoff": state.get("takeoff")}
+                         if prior_issues else None)
     try:
         msgs = [SystemMessage(prompts.takeoff_system()),
                 HumanMessage(prompts.takeoff_user(
                     s, guidelines.section("4"), comparables,
                     checklist_dict, item_keys, trade_keys, allowance_keys,
-                    state.get("estimator_feedback")))]
+                    state.get("estimator_feedback"), verifier_feedback))]
         m = takeoff_model()
         resp = m.invoke(msgs)
         takeoff = _validated(schemas.Takeoff, resp.content, "lines")
@@ -302,6 +315,33 @@ def takeoff_node(state: AgentState) -> dict:
     return {"takeoff": takeoff.model_dump() if takeoff else None,
             "retrieved": {**state.get("retrieved", {}),
                           "past_project_quote": comparables}}
+
+
+def verify_takeoff_node(state: AgentState) -> dict:
+    """Second, cheap LLM pass: cross-checks the takeoff against intake slots
+    and against itself for two specific failure classes -- a line implying
+    new construction for scope an intake slot says already exists, or a
+    line contradicting another line in the same takeoff about the same
+    physical item. Confirmed live: both happened in the same real takeoff
+    (egress window marked "no new window needed" on one line, then a new
+    window well priced for it two lines later). Degrades to "no issues" on
+    any parse failure -- a QA-check hiccup must never block the pipeline."""
+    takeoff = state.get("takeoff")
+    attempts = state.get("takeoff_verify_attempts", 0) + 1
+    issues: list[dict] = []
+    if takeoff:
+        try:
+            msgs = [SystemMessage(prompts.takeoff_verify_system()),
+                    HumanMessage(prompts.takeoff_verify_user(
+                        state.get("slots", {}), takeoff))]
+            resp = takeoff_verifier_model().invoke(msgs)
+            parsed = _parse_json_block(resp.content, required_key="issues")
+            if parsed and isinstance(parsed.get("issues"), list):
+                issues = [i for i in parsed["issues"]
+                         if isinstance(i, dict) and i.get("line_id")]
+        except Exception:
+            logger.exception("takeoff verification failed — proceeding without it")
+    return {"takeoff_issues": issues, "takeoff_verify_attempts": attempts}
 
 
 _LABOR_LUMP_UNITS = {"lump_sum"}
@@ -395,7 +435,16 @@ def price_fill_node(state: AgentState) -> dict:
                 "unit": unit, "takeoff_line_ref": line.get("id", "")}
 
         priced_anything = False
-        if item:
+        if item and item != allowance_item:
+            # When the takeoff sets both to the SAME key, "item" and
+            # "allowance_item" aren't two different cost components -- they're
+            # the same physical thing looked up two ways. The allowance
+            # branch below already reproduces the correct price on its own
+            # (falling back to this exact material-sheet row when the
+            # allowance table has no distinct $ entry for the key); pricing
+            # "item" here too would silently double-charge it. Confirmed
+            # live across 22 real quotes / 43 lines, 6-15% of each quote's
+            # total was this exact duplicate.
             priced_anything = True
             rows.append(_price_material(cat, item, qty, base, desc))
 
@@ -466,6 +515,26 @@ def price_fill_node(state: AgentState) -> dict:
         if not priced_anything:
             rows.append({**base, "price_source": "unpriced", "sheet_status": "missing",
                         "note": "no material or labor key on this line — estimator to price"})
+
+    # Retry-exhausted verifier flags (verify_takeoff_node): the takeoff
+    # still contradicts an "already exists" slot or contradicts itself
+    # after one corrective retry. Never let that reach the total silently
+    # -- neutralize exactly those lines into the same "unpriced" contract
+    # every other unresolved line already uses, so they surface in the
+    # estimator's existing review flow instead of being priced wrong.
+    flagged = {i["line_id"]: i.get("reason", "")
+              for i in (state.get("takeoff_issues") or []) if i.get("line_id")}
+    if flagged:
+        rows = [
+            {**r, "price_source": "unpriced", "unit_price_low_cad": None,
+             "unit_price_high_cad": None, "unit_price_quoted_cad": None,
+             "extended_low_cad": None, "extended_high_cad": None,
+             "extended_quoted_cad": None,
+             "note": (f"takeoff verifier flagged this line: {flagged[r['takeoff_line_ref']]} "
+                      "— estimator to confirm before pricing")}
+            if r.get("takeoff_line_ref") in flagged else r
+            for r in rows
+        ]
 
     return {"price_resolution": rows}
 
