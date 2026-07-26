@@ -470,6 +470,20 @@ def price_fill_node(state: AgentState) -> dict:
     return {"price_resolution": rows}
 
 
+def _total_contract_value(price_resolution: list[dict]) -> dict:
+    """Deterministic grand total -- same computation the quote-accuracy eval
+    uses as ground truth (run_quote_accuracy_eval.py: sum extended_quoted_cad,
+    "or 0" so unpriced/tavily-no-price rows contribute nothing rather than
+    biasing the total). Computed in code and handed to the drafting LLM
+    verbatim rather than trusting it to sum a long, growing line-item list
+    itself -- the total was intermittently missing from drafts when left to
+    the LLM's own initiative (no prompt rule required it at all)."""
+    total = round(sum(r.get("extended_quoted_cad") or 0 for r in price_resolution), 2)
+    excluded = [r.get("description") or r.get("category") or r.get("takeoff_line_ref")
+               for r in price_resolution if not r.get("extended_quoted_cad")]
+    return {"total_contract_value_cad": total, "excluded_unpriced_lines": excluded}
+
+
 def draft_node(state: AgentState) -> dict:
     """Stage 3: the cited quote draft, from the structured stage outputs plus
     the contractor's guideline context (retrieved here, where it's used)."""
@@ -478,13 +492,15 @@ def draft_node(state: AgentState) -> dict:
                  "builder_guideline": _pack(get_retriever().search_guidelines(
                      f"allowances rules of thumb {_tier(s) or ''} "
                      f"{s.get('scope', 'basement')}", k=4))}
+    price_resolution = state.get("price_resolution", [])
     msgs = [SystemMessage(prompts.draft_system()),
             ("user", prompts.draft_user(s,
                                         state.get("flags", []),
                                         retrieved,
                                         state.get("codes_checklist"),
                                         state.get("takeoff"),
-                                        state.get("price_resolution", [])))]
+                                        price_resolution,
+                                        _total_contract_value(price_resolution)))]
     feedback = state.get("estimator_feedback")
     if feedback:
         msgs.append(("user",

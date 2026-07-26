@@ -233,11 +233,17 @@ range with "confirm on-site before finalizing" — that rate is confirmed but co
 - Every slot valued "unknown" appears under Assumptions (§5.11).
 - If flags are present, the draft OPENS with a "⚠ ESTIMATOR REVIEW REQUIRED" block listing \
 each flag_text verbatim, before any pricing content.
+- The draft MUST include a clearly labeled "TOTAL CONTRACT VALUE (pre-HST)" figure — this is \
+the single most important number for the estimator and must never be omitted, regardless of \
+how many categories or lines the draft has. Use the exact number given in TOTAL CONTRACT VALUE \
+below verbatim — it is summed in code from every line's "extended_quoted_cad", never recompute, \
+re-sum, or round it yourself. If TOTAL CONTRACT VALUE lists any excluded_unpriced_lines, state \
+plainly that the total excludes those lines (name them) and is not yet final.
 - Structure: flag block (if any) → project summary → work categories with line items \
 ({contractor_name}'s real quote format: numbered categories like SEPARATE ENTRANCE, PARTITIONS + \
-INSULATION, ONE FULL BATHROOM...) → allowances table (tier vocabulary: \
-ESSENTIAL/SUPERIOR/SUPREME) → milestones & timeline (§5.4-5.5) → standard exclusions (§5.7, \
-with explicit counts/locations per §5.18) → Assumptions → citations appendix.
+INSULATION, ONE FULL BATHROOM...) → TOTAL CONTRACT VALUE (pre-HST) → allowances table (tier \
+vocabulary: ESSENTIAL/SUPERIOR/SUPREME) → milestones & timeline (§5.4-5.5) → standard exclusions \
+(§5.7, with explicit counts/locations per §5.18) → Assumptions → citations appendix.
 
 === GUIDELINE §5 — QUOTING RULES (all mandatory) ===
 {section_5}
@@ -250,7 +256,8 @@ def draft_system() -> str:
 
 
 def draft_user(slots: dict, flags: list, retrieved: dict, codes_checklist: dict | None,
-               takeoff: dict | None, price_resolution: list) -> str:
+               takeoff: dict | None, price_resolution: list,
+               total_contract_value: dict) -> str:
     ctx = []
     for dt, chunks in retrieved.items():
         for c in chunks:
@@ -264,5 +271,7 @@ def draft_user(slots: dict, flags: list, retrieved: dict, codes_checklist: dict 
             f"PRICE RESOLUTION (contractor price sheet + labor rates + tier "
             f"allowances; web fallback for missing/stale items):\n"
             f"{json.dumps(price_resolution, indent=2)}\n\n"
+            f"TOTAL CONTRACT VALUE (pre-HST) — computed in code, quote verbatim "
+            f"(see hard rules):\n{json.dumps(total_contract_value, indent=2)}\n\n"
             f"RETRIEVED CONTEXT ({sum(len(v) for v in retrieved.values())} chunks):\n"
             + "\n\n".join(ctx))
