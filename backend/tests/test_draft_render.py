@@ -193,6 +193,27 @@ def test_citations_appendix_dedupes_and_lists_retrieved_citations():
     assert "By-law 26-007" in chunk
 
 
+def test_code_verifications_section_lists_non_line_item_checklist_entries():
+    checklist = {"items": [
+        {"id": "c1", "requirement": "Verify ceiling height meets minimum",
+         "citation": "OBC 9.5.3.1", "action": "verify_on_site"},
+        {"id": "c2", "requirement": "Install floor drain",
+         "citation": "OBC 9.31.4.3", "action": "line_item"},
+    ]}
+    draft = render_draft({**_state(), "codes_checklist": checklist}, NARRATIVE)
+    idx = draft.index("## 25. On-Site Verifications Required")
+    chunk = draft[idx:]
+    assert "Verify ceiling height meets minimum" in chunk
+    assert "OBC 9.5.3.1" in chunk
+    assert "Install floor drain" not in chunk  # line_item -- priced, not listed here
+
+
+def test_code_verifications_section_empty_when_nothing_to_verify():
+    draft = render_draft(_state(), NARRATIVE)
+    idx = draft.index("## 25. On-Site Verifications Required")
+    assert "None identified" in draft[idx:]
+
+
 def test_allowances_table_reflects_resolved_tier_label():
     draft = render_draft(_state(slots={"package_tier_budget": "SUPERIOR tier"}), NARRATIVE)
     idx = draft.index("## 19. Allowances Table")

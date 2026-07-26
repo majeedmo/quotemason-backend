@@ -310,6 +310,65 @@ def _enforce_code_coverage(takeoff: schemas.Takeoff,
         next_idx += 1
 
 
+def _drop_non_line_item_code_refs(takeoff: schemas.Takeoff,
+                                  checklist: schemas.CodesChecklist) -> None:
+    """A "verify_on_site"/"informational" checklist item is an attention
+    check, not billable or quotable work -- it has no item/trade/allowance
+    of its own, so a takeoff line for one always falls into price_fill's
+    generic "no material or labor key on this line" bucket, indistinguishable
+    downstream from a genuine missing price. Confirmed live: this put lines
+    like "Verify ceiling height meets OBC 9.5.3.1" in the estimator's "needs
+    a price" queue, asking for a dollar figure on something that was never a
+    cost. The takeoff prompt only instructs creating a line for "line_item"
+    actions but doesn't forbid the others, and the model does so
+    inconsistently (2 of 4 identical-spec quotes did this, 2 didn't) -- drop
+    any line tied to a non-"line_item" checklist entry here rather than rely
+    on prompt compliance. These items still reach the estimator, just via
+    draft_render's dedicated on-site-verifications section, not a price
+    line."""
+    by_id = {i.id: i for i in checklist.items}
+    takeoff.lines = [
+        ln for ln in takeoff.lines
+        if not (ln.code_item_ref and by_id.get(ln.code_item_ref)
+               and by_id[ln.code_item_ref].action != "line_item")
+    ]
+
+
+# trade -> the category its baseline placeholder line is grouped under if
+# the takeoff drops it entirely (app/pricing/quote_sections.py already maps
+# both to real sections).
+_BASELINE_TRADES: dict[str, str] = {
+    "plumbing_rough_and_finish": "plumbing",
+    "hvac_rough_and_finish": "hvac",
+}
+
+
+def _enforce_baseline_trades(takeoff: schemas.Takeoff) -> None:
+    """plumbing_rough_and_finish and hvac_rough_and_finish are near-universal
+    for both of Company A's scopes (every wet bar/kitchen needs water
+    supply+drain, every finished basement needs ventilation/duct tie-in,
+    per guideline §4) -- but neither has a dedicated intake slot, so the
+    omission verifier (built around slot-tied omissions) can't catch either
+    being dropped outright. Confirmed live: of 4 identical-spec quotes, one
+    was missing HVAC entirely and another was missing both HVAC and
+    plumbing entirely -- a ~$9,150 swing on a ~$50K quote. Enforced here in
+    code, not left to prompt compliance -- priced normally afterward through
+    price_fill_node's own labor-rate lookup, never left "unpriced"."""
+    present = {ln.trade for ln in takeoff.lines if ln.trade}
+    next_idx = len(takeoff.lines) + 1
+    for trade, category in _BASELINE_TRADES.items():
+        if trade in present:
+            continue
+        takeoff.lines.append(schemas.TakeoffLine(
+            id=f"t{next_idx}", category=category, trade=trade, quantity=1,
+            unit="lump_sum",
+            description=f"{trade.replace('_', ' ')} (baseline scope)",
+            basis="deterministically enforced -- every project needs baseline "
+                 f"{category} rough-in/finish labor; the takeoff did not "
+                 f"include a '{trade}' line", source="assumption"))
+        next_idx += 1
+
+
 def takeoff_node(state: AgentState) -> dict:
     """Stage 2: structured material-quantity takeoff from §4 rules of thumb,
     the codes checklist, and comparable past projects. Degrades to None —
@@ -352,8 +411,10 @@ def takeoff_node(state: AgentState) -> dict:
         for i, line in enumerate(takeoff.lines, start=1):
             line.id = f"t{i}"  # assigned in code, never by the model
         if checklist_dict.get("items"):
-            _enforce_code_coverage(takeoff,
-                                   schemas.CodesChecklist.model_validate(checklist_dict))
+            checklist = schemas.CodesChecklist.model_validate(checklist_dict)
+            _enforce_code_coverage(takeoff, checklist)
+            _drop_non_line_item_code_refs(takeoff, checklist)
+        _enforce_baseline_trades(takeoff)
     return {"takeoff": takeoff.model_dump() if takeoff else None,
             "retrieved": {**state.get("retrieved", {}),
                           "past_project_quote": comparables},

@@ -303,6 +303,29 @@ def total_contract_value(price_resolution: list[dict]) -> dict:
     return {"total_contract_value_cad": total, "excluded_unpriced_lines": excluded}
 
 
+def _render_code_verifications(codes_checklist: dict) -> str:
+    """Checklist items the codes stage marked "verify_on_site"/
+    "informational" are attention checks, not billable work -- they have no
+    item/trade/allowance and were never meant to reach price_resolution at
+    all (see nodes._drop_non_line_item_code_refs, which now strips any
+    takeoff line the model created for one before pricing). Surfaced here
+    instead, deterministically, so this information isn't simply lost --
+    the estimator still needs to see "verify ceiling height on site," just
+    not as a line asking for a dollar figure."""
+    items = [i for i in (codes_checklist or {}).get("items") or []
+            if i.get("action") != "line_item"]
+    lines = ["## 25. On-Site Verifications Required", "",
+             "Not priced -- these need the estimator's attention/confirmation, "
+             "not a dollar figure (§5.15)."]
+    if not items:
+        lines.append("- None identified for this project.")
+    else:
+        for i in items:
+            citation = f" ({i['citation']})" if i.get("citation") else ""
+            lines.append(f"- {i.get('requirement', '')}{citation}")
+    return "\n".join(lines) + "\n"
+
+
 def _render_citations(retrieved: dict) -> str:
     seen: set[tuple[str, str]] = set()
     lines = ["## 24. Citations Appendix", ""]
@@ -369,5 +392,6 @@ def render_draft(state: dict, narrative: "schemas.DraftNarrative") -> str:
         _render_terms(),
         _render_assumptions(slots, takeoff.get("assumptions") or []),
         _render_citations(retrieved),
+        _render_code_verifications(state.get("codes_checklist") or {}),
     ]
     return "\n".join(doc)
