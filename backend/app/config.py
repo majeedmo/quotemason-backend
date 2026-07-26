@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     zoning_jurisdiction: str = "cambridge"
     price_staleness_days: int = 90
 
+    # Ontario's statutory HST rate -- a tax-law fact, not a business
+    # placeholder, so it lives here rather than in the guideline corpus.
+    hst_rate: float = 0.13
+
     # Duplicate-quote guardrails (see backend/app/guardrails.py). A quote for
     # the same property is "still active" for this many days; the same
     # contact (email/phone) can start quotes for at most this many distinct

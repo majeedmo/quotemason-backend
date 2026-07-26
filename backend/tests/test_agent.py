@@ -686,21 +686,21 @@ def test_price_fill_same_item_and_allowance_key_prices_once_not_twice(monkeypatc
 # --- draft total: computed in code, never left to the LLM's own summation ---
 
 def test_total_contract_value_sums_priced_rows_and_lists_excluded():
-    from app.agent.nodes import _total_contract_value
+    from app.agent.draft_render import total_contract_value
     rows = [
         {"description": "Flooring", "extended_quoted_cad": 100.5},
         {"description": "Drywall", "extended_quoted_cad": 200},
         {"description": "Floor drain", "price_source": "unpriced"},
         {"category": "kitchen", "price_source": "tavily"},  # no extended_quoted_cad
     ]
-    out = _total_contract_value(rows)
+    out = total_contract_value(rows)
     assert out["total_contract_value_cad"] == 300.5
     assert out["excluded_unpriced_lines"] == ["Floor drain", "kitchen"]
 
 
 def test_total_contract_value_empty_price_resolution():
-    from app.agent.nodes import _total_contract_value
-    assert _total_contract_value([]) == {
+    from app.agent.draft_render import total_contract_value
+    assert total_contract_value([]) == {
         "total_contract_value_cad": 0, "excluded_unpriced_lines": []}
 
 
@@ -775,7 +775,7 @@ def test_graph_accumulates_generation_stats_across_stages(monkeypatch):
     monkeypatch.setattr(nodes, "takeoff_verifier_model",
                         lambda: _FakeStageModel(_resp("verify", _CLEAR)))
     monkeypatch.setattr(nodes, "drafting_model",
-                        lambda: _FakeStageModel(_resp("draft", "# Quote")))
+                        lambda: _FakeStageModel(_resp("draft", _narrative_json())))
 
     g = build_graph(checkpointer=InMemorySaver())
     out = g.invoke({"estimator_feedback": "n/a", "slots": {"scope": "finished basement"}},
@@ -785,25 +785,22 @@ def test_graph_accumulates_generation_stats_across_stages(monkeypatch):
     assert all(s["cost_usd"] == 0.001 for s in out["generation_stats"])
 
 
-def test_draft_node_passes_computed_total_to_prompt(monkeypatch):
-    """The drafting LLM must receive the code-computed total verbatim --
-    this is what makes the total reliably present instead of depending on
-    the LLM to sum every line itself (seen live: intermittently omitted)."""
+def test_draft_node_renders_total_contract_value_from_price_resolution(monkeypatch):
+    """The final draft's Total Contract Value section must reflect the
+    code-computed total (draft_render.total_contract_value) -- the drafting
+    LLM is no longer shown price_resolution at all, so it can't reproduce
+    or omit the total itself (seen live under the old architecture:
+    intermittently omitted when left to the LLM's own summation)."""
     _patch_stage_retrievers(monkeypatch)
-    seen = {}
-
-    class _FakeDrafter:
-        def invoke(self, msgs):
-            seen["user_msg"] = msgs[-1][1]
-            return SimpleNamespace(content="# Quote")
-    monkeypatch.setattr(nodes, "drafting_model", lambda: _FakeDrafter())
+    monkeypatch.setattr(nodes, "drafting_model", lambda: _FakeStageModel(
+        SimpleNamespace(content=_narrative_json())))
 
     from app.agent.nodes import draft_node
-    draft_node({"slots": {}, "flags": [],
-               "price_resolution": [{"description": "Flooring",
-                                     "extended_quoted_cad": 500}]})
-    assert "TOTAL CONTRACT VALUE" in seen["user_msg"]
-    assert '"total_contract_value_cad": 500' in seen["user_msg"]
+    out = draft_node({"slots": {"scope": "finished basement"}, "flags": [],
+                      "price_resolution": [{"category": "flooring", "description": "Flooring",
+                                            "extended_quoted_cad": 500}]})
+    assert "Total Contract Value" in out["draft"]
+    assert "$500.00" in out["draft"]
 
 
 # --- traceability: code_item -> takeoff line -> price_resolution row --------
@@ -928,6 +925,11 @@ _FLAGGED = '{"issues": [{"line_id": "t1", "reason": "prices new construction for
 _CLEAR = '{"issues": []}'
 
 
+def _narrative_json(summary="Project summary.", confidence="LOW", reasons=None):
+    return json.dumps({"project_summary": summary, "pricing_confidence": confidence,
+                       "confidence_reasons": reasons or ["no comparable project found"]})
+
+
 def _mock_pipeline_models(monkeypatch, takeoff_responses, verify_responses):
     # Each *_model() call is a factory in the real code (a fresh ChatOpenAI
     # instance every time) -- but the fake here must be the SAME stateful
@@ -938,7 +940,7 @@ def _mock_pipeline_models(monkeypatch, takeoff_responses, verify_responses):
     codes_fake = _FakeStageModel(SimpleNamespace(content=_codes_json(), tool_calls=[]))
     takeoff_fake = _FakeStageModel(*[SimpleNamespace(content=r) for r in takeoff_responses])
     verify_fake = _FakeStageModel(*[SimpleNamespace(content=r) for r in verify_responses])
-    draft_fake = _FakeStageModel(SimpleNamespace(content="# Quote"))
+    draft_fake = _FakeStageModel(SimpleNamespace(content=_narrative_json()))
     monkeypatch.setattr(nodes, "codes_model", lambda: codes_fake)
     monkeypatch.setattr(nodes, "takeoff_model", lambda: takeoff_fake)
     monkeypatch.setattr(nodes, "takeoff_verifier_model", lambda: verify_fake)
@@ -1054,8 +1056,11 @@ def test_graph_compiles_and_routes_hard(monkeypatch):
 def test_graph_revision_entry_skips_intake(monkeypatch):
     """/revise resumes the thread at the codes stage; intake must not run,
     all three stages re-run (fresh checklist/takeoff — feedback can change
-    scope), the previous draft + feedback reach the drafter, and the flag
-    is cleared."""
+    scope), the feedback reaches the takeoff stage, and the flag is
+    cleared. The final draft is rendered deterministically
+    (draft_render.render_draft) from whatever this revision's
+    price_resolution/takeoff produced -- it is no longer the drafting LLM's
+    raw output (that architecture predates the fixed-template rewrite)."""
     from langgraph.checkpoint.memory import InMemorySaver
     from app.agent.graph import build_graph
 
@@ -1071,14 +1076,14 @@ def test_graph_revision_entry_skips_intake(monkeypatch):
 
     seen = {}
 
-    class _FakeDrafter:
-        """Serves takeoff (JSON-retry path -> None) and draft stages."""
+    class _FakeTakeoff:
         def invoke(self, msgs):
             last = msgs[-1]
-            seen["last_user"] = last[1] if isinstance(last, tuple) else last.content
-            return SimpleNamespace(content="# Quote v2")
-    monkeypatch.setattr(nodes, "takeoff_model", lambda: _FakeDrafter())
-    monkeypatch.setattr(nodes, "drafting_model", lambda: _FakeDrafter())
+            seen["takeoff_last_user"] = last[1] if isinstance(last, tuple) else last.content
+            return SimpleNamespace(content=_GOOD_TAKEOFF)
+    monkeypatch.setattr(nodes, "takeoff_model", lambda: _FakeTakeoff())
+    monkeypatch.setattr(nodes, "drafting_model", lambda: _FakeStageModel(
+        SimpleNamespace(content=_narrative_json())))
     monkeypatch.setattr(nodes, "takeoff_verifier_model",
                         lambda: SimpleNamespace(invoke=lambda msgs: SimpleNamespace(
                             content='{"issues": []}')))
@@ -1089,9 +1094,8 @@ def test_graph_revision_entry_skips_intake(monkeypatch):
                     "slots": {"scope": "finished basement"},
                     "draft": "# Quote v1"},
                    {"configurable": {"thread_id": "rev"}})
-    assert out["draft"] == "# Quote v2"
     assert not out.get("estimator_feedback")  # cleared for the next turn
-    assert "drop the sauna" in seen["last_user"]
-    assert "# Quote v1" in seen["last_user"]
+    assert "drop the sauna" in seen["takeoff_last_user"]
+    assert "Project Summary" in out["draft"]  # rendered deterministically, not raw LLM text
     # stages re-ran: fresh checklist from the codes stage this invoke
     assert out["codes_checklist"]["items"][0]["section_number"] == "9.9.10"

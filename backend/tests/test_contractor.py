@@ -26,8 +26,8 @@ def test_intake_system_formats_with_brand_not_internal_name():
     assert '"action": "ask" | "complete" | "hard_route"' in text
 
 
-def test_draft_system_formats_with_contractor_name():
-    assert "Company A" in prompts.draft_system()
+def test_draft_narrative_system_formats_with_contractor_name():
+    assert "Company A" in prompts.draft_narrative_system()
 
 
 def test_loaders_stamp_contractor_only_on_owned_docs():
