@@ -12,6 +12,8 @@ is a labeled example of what the agent got wrong.
 from __future__ import annotations
 
 import logging
+import time
+from datetime import datetime, timedelta, timezone
 from urllib.parse import quote as _urlquote
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException
@@ -21,7 +23,7 @@ from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
-from app.agent.nodes import draft_node
+from app.agent.nodes import _generation_summary, draft_node
 from app.api import deps
 from app.config import settings
 from app.guardrails import check_duplicate, normalize_email, normalize_phone, property_key
@@ -213,7 +215,33 @@ def _stage_outputs(state: dict) -> dict | None:
     quote-accuracy eval asserts against these, not the prose."""
     out = {k: state.get(k)
            for k in ("codes_checklist", "takeoff", "price_resolution")}
-    return out if any(out.values()) else None
+    if not any(out.values()):
+        return None
+    stats = state.get("generation_stats") or []
+    out["generation_stats"] = stats
+    out["generation_summary"] = _generation_summary(stats)
+    return out
+
+
+def _record_generation_event(new_row: dict, trigger: str, duration_seconds: float,
+                             event_stats: list[dict]) -> None:
+    """Best-effort dashboard row for this generation event's own incremental
+    cost/usage -- never let a stats-recording hiccup block the draft that
+    was already successfully created from being returned."""
+    try:
+        summary = _generation_summary(event_stats)
+        deps.get_store().record_generation_event(
+            quote_id=new_row["id"], thread_id=new_row["thread_id"],
+            version=new_row["version"], trigger=trigger,
+            duration_seconds=duration_seconds,
+            total_cost_usd=summary["total_cost_usd"],
+            cost_is_complete=summary["cost_is_complete"],
+            total_input_tokens=summary["total_input_tokens"],
+            total_output_tokens=summary["total_output_tokens"],
+            llm_calls=summary["llm_calls"])
+    except Exception:
+        logger.exception("failed to record generation event for quote %s",
+                         new_row.get("id"))
 
 
 def _log_guardrail_event(reason: str, thread_id: str,
@@ -240,9 +268,13 @@ def _finish_draft(thread_id: str, contact: dict[str, str] | None) -> None:
     price_fill -> draft) and persist the result for the estimator queue.
     Runs as a background task — the customer never waits on (or sees) the
     draft."""
+    config = {"configurable": {"thread_id": thread_id}}
+    prior_snapshot = deps.get_graph().get_state(config)
+    prior_len = len((prior_snapshot.values if prior_snapshot else {})
+                    .get("generation_stats") or [])
+    started = time.monotonic()
     try:
-        state = deps.get_graph().invoke(
-            None, {"configurable": {"thread_id": thread_id}})
+        state = deps.get_graph().invoke(None, config)
     except Exception:
         logger.exception("background drafting failed (thread %s)", thread_id)
         return
@@ -250,17 +282,24 @@ def _finish_draft(thread_id: str, contact: dict[str, str] | None) -> None:
         logger.error("background drafting produced no draft (thread %s)",
                      thread_id)
         return
+    duration = round(time.monotonic() - started, 1)
+    # This event's own contribution -- everything appended since before this
+    # invocation, not the whole thread's cumulative history (generation_stats
+    # is strictly append-only, so this slice is safe).
+    event_stats = (state.get("generation_stats") or [])[prior_len:]
     packet = state.get("routing_packet") or {}
     if contact:
         packet = {**packet, "contact": contact}
     contact = contact or {}
     slots = state.get("slots", {})
-    deps.get_store().create_draft(
+    stage_outputs = _stage_outputs(state) or {}
+    new_row = deps.get_store().create_draft(
         thread_id, state["draft"], packet or None,
-        stage_outputs=_stage_outputs(state),
+        stage_outputs={**stage_outputs, "generation_duration_seconds": duration},
         contact_email=normalize_email(contact.get("email")),
         contact_phone=normalize_phone(contact.get("phone")),
         property_key=property_key(slots.get("scope"), slots.get("property_location")))
+    _record_generation_event(new_row, "initial", duration, event_stats)
 
 
 @app.post("/chat")
@@ -298,6 +337,17 @@ def chat(body: ChatIn, background: BackgroundTasks):
 @app.get("/quotes")
 def list_quotes(status: str | None = None):
     return deps.get_store().list(status)
+
+
+@app.get("/quotes/generation-stats")
+def generation_stats(days: int = 30):
+    """Dashboard widget data: aggregate totals + recent generation events
+    over the trailing window. Backed by quote_generation_events, not
+    LangSmith -- LangSmith is optional/best-effort everywhere else in this
+    app and its cost field is documented as unreliable on repeat reads,
+    exactly the access pattern a dashboard needs."""
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    return deps.get_store().generation_dashboard_stats(since)
 
 
 @app.get("/quotes/{quote_id}")
@@ -351,25 +401,35 @@ def revise_quote(quote_id: int, body: ReviseIn):
         raise HTTPException(404, "quote not found")
     if row["status"] not in ("pending_review", "edited"):
         raise HTTPException(409, f"quote is {row['status']}, not revisable")
+    config = {"configurable": {"thread_id": row["thread_id"]}}
+    prior_snapshot = deps.get_graph().get_state(config)
+    prior_len = len((prior_snapshot.values if prior_snapshot else {})
+                    .get("generation_stats") or [])
+    started = time.monotonic()
     state = deps.get_graph().invoke(
         {"messages": [HumanMessage(f"[estimator revision request] "
                                    f"{body.feedback}")],
          "estimator_feedback": body.feedback},
-        {"configurable": {"thread_id": row["thread_id"]}})
+        config)
     if not state.get("draft"):
         raise HTTPException(502, "revision run produced no draft")
+    duration = round(time.monotonic() - started, 1)
+    event_stats = (state.get("generation_stats") or [])[prior_len:]
     packet = state.get("routing_packet") or {}
     prev_contact = (row.get("routing_packet") or {}).get("contact")
     if prev_contact:
         packet = {**packet, "contact": prev_contact}
     # Same thread/job as the row being revised — carry its identity columns
     # forward rather than recomputing (intake doesn't re-run on a revision).
-    return store.create_draft(
+    stage_outputs = _stage_outputs(state) or {}
+    new_row = store.create_draft(
         row["thread_id"], state["draft"], packet or None,
-        stage_outputs=_stage_outputs(state),
+        stage_outputs={**stage_outputs, "generation_duration_seconds": duration},
         contact_email=row.get("contact_email"),
         contact_phone=row.get("contact_phone"),
         property_key=row.get("property_key"))
+    _record_generation_event(new_row, "revise", duration, event_stats)
+    return new_row
 
 
 @app.post("/quotes/{quote_id}/lines/{takeoff_line_ref}/price")
@@ -389,15 +449,25 @@ def override_line_price(quote_id: int, takeoff_line_ref: str, body: PriceOverrid
     updated_resolution = [
         override_row if r is target else r for r in price_resolution]
 
+    started = time.monotonic()
     result = draft_node({**state, "price_resolution": updated_resolution})
     if not result.get("draft"):
         raise HTTPException(502, "draft regeneration produced no draft")
+    duration = round(time.monotonic() - started, 1)
+    # draft_node is called directly here (not via graph.invoke), so it
+    # returns only its OWN new entries already -- no slicing needed, unlike
+    # the full-graph paths above.
+    event_stats = result.get("generation_stats") or []
+    cumulative_stats = (state.get("generation_stats") or []) + event_stats
 
     new_row = store.create_draft(
         row["thread_id"], result["draft"], result.get("routing_packet"),
         stage_outputs={"codes_checklist": state.get("codes_checklist"),
                        "takeoff": state.get("takeoff"),
-                       "price_resolution": updated_resolution},
+                       "price_resolution": updated_resolution,
+                       "generation_stats": cumulative_stats,
+                       "generation_summary": _generation_summary(cumulative_stats),
+                       "generation_duration_seconds": duration},
         contact_email=row.get("contact_email"),
         contact_phone=row.get("contact_phone"),
         property_key=row.get("property_key"))
@@ -406,6 +476,7 @@ def override_line_price(quote_id: int, takeoff_line_ref: str, body: PriceOverrid
         price_cad=body.price_cad, note=body.note,
         price_source_before=price_source_before,
         source_quote_id=quote_id, result_quote_id=new_row["id"])
+    _record_generation_event(new_row, "price_override", duration, event_stats)
     _log_price_override_to_langsmith(row, takeoff_line_ref, body.price_cad,
                                      body.note)
     return new_row
@@ -438,15 +509,22 @@ def override_line_prices(quote_id: int, body: PriceOverridesIn):
         updated_resolution = [
             override_row if r is target else r for r in updated_resolution]
 
+    started = time.monotonic()
     result = draft_node({**state, "price_resolution": updated_resolution})
     if not result.get("draft"):
         raise HTTPException(502, "draft regeneration produced no draft")
+    duration = round(time.monotonic() - started, 1)
+    event_stats = result.get("generation_stats") or []
+    cumulative_stats = (state.get("generation_stats") or []) + event_stats
 
     new_row = store.create_draft(
         row["thread_id"], result["draft"], result.get("routing_packet"),
         stage_outputs={"codes_checklist": state.get("codes_checklist"),
                        "takeoff": state.get("takeoff"),
-                       "price_resolution": updated_resolution},
+                       "price_resolution": updated_resolution,
+                       "generation_stats": cumulative_stats,
+                       "generation_summary": _generation_summary(cumulative_stats),
+                       "generation_duration_seconds": duration},
         contact_email=row.get("contact_email"),
         contact_phone=row.get("contact_phone"),
         property_key=row.get("property_key"))
@@ -456,5 +534,6 @@ def override_line_prices(quote_id: int, body: PriceOverridesIn):
             price_cad=item.price_cad, note=item.note,
             price_source_before=price_sources_before[item.takeoff_line_ref],
             source_quote_id=quote_id, result_quote_id=new_row["id"])
+    _record_generation_event(new_row, "price_override", duration, event_stats)
     _log_price_overrides_batch_to_langsmith(row, body.overrides)
     return new_row

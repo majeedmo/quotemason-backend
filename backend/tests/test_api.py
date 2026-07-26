@@ -84,18 +84,42 @@ class FakeStore:
         self.price_overrides.append(row)
         return row
 
+    def record_generation_event(self, **kwargs):
+        self.generation_events = getattr(self, "generation_events", [])
+        self.generation_events.append(kwargs)
+        return kwargs
+
+    def generation_dashboard_stats(self, since, limit=10):
+        events = [e for e in getattr(self, "generation_events", [])]
+        total_cost = sum(e["total_cost_usd"] or 0 for e in events)
+        return {
+            "totals": {"count": len(events), "total_cost_usd": total_cost,
+                      "avg_duration_seconds": (sum(e["duration_seconds"] for e in events) / len(events)
+                                               if events else 0),
+                      "avg_cost_usd": (total_cost / len(events) if events else 0)},
+            "recent": list(reversed(events))[:limit],
+        }
+
 
 class FakeGraph:
     def __init__(self, state):
         self.state = state
         self.calls = []
+        # get_state() defaults to returning the same `state` as invoke() --
+        # matches every existing test's assumption (e.g. the price-override
+        # endpoints read current price_resolution/takeoff via get_state()).
+        # Tests that need get_state() to return something DIFFERENT from
+        # what invoke() returns (to exercise main.py's before/after
+        # generation_stats delta-slicing) can set this explicitly.
+        self.get_state_override: dict | None = None
 
     def invoke(self, payload, config, **kwargs):
         self.calls.append((payload, config, kwargs))
         return self.state
 
     def get_state(self, config):
-        return type("FakeSnapshot", (), {"values": self.state})()
+        values = self.state if self.get_state_override is None else self.get_state_override
+        return type("FakeSnapshot", (), {"values": values})()
 
 
 @pytest.fixture
@@ -121,7 +145,13 @@ DRAFT_STATE = {"messages": [type("M", (), {"content": "Draft attached"})()],
                "takeoff": {"lines": [{"category": "flooring", "item": "lvp",
                                       "quantity": 900, "unit": "sqft"}]},
                "price_resolution": [{"category": "flooring", "item": "lvp",
-                                     "price_source": "price_sheet"}]}
+                                     "price_source": "price_sheet"}],
+               "generation_stats": [
+                   {"stage": "codes", "model": "anthropic/claude-haiku-4.5",
+                    "input_tokens": 500, "output_tokens": 100, "cost_usd": 0.001},
+                   {"stage": "draft", "model": "anthropic/claude-sonnet-5",
+                    "input_tokens": 4000, "output_tokens": 1500, "cost_usd": 0.023},
+               ]}
 
 
 def test_login_ok(api, monkeypatch):
@@ -160,6 +190,13 @@ def test_chat_complete_persists_draft(api, monkeypatch):
     # first call is the intake turn paused before the pipeline; second resumes
     assert g.calls[0][2] == {"interrupt_before": ["codes"]}
     assert g.calls[1][0] is None
+    # cumulative cost/usage rides along in stage_outputs for the quote's own
+    # detail view, and a dashboard event was recorded for this generation
+    assert row["stage_outputs"]["generation_summary"]["total_cost_usd"] == pytest.approx(0.024)
+    assert "generation_duration_seconds" in row["stage_outputs"]
+    assert len(api.fake_store.generation_events) == 1
+    event = api.fake_store.generation_events[0]
+    assert event["quote_id"] == row["id"] and event["trigger"] == "initial"
 
 
 def test_chat_contact_lands_in_packet_and_mailto(api, monkeypatch):
@@ -210,6 +247,40 @@ def test_revise_creates_v2_and_supersedes_v1(api, monkeypatch):
     payload, config, _ = g.calls[0]
     assert payload["estimator_feedback"] == "drop the sauna"
     assert config["configurable"]["thread_id"] == "t1"
+
+
+def test_revise_records_only_this_events_own_incremental_stats(api, monkeypatch):
+    """generation_stats accumulates across the whole thread (v1 + this
+    revision), so the CUMULATIVE total in stage_outputs must include both,
+    but the dashboard event for THIS revision must record only its own new
+    entries, not v1's already-recorded cost too (that would double-count
+    across the two quote_generation_events rows)."""
+    _set_graph(monkeypatch, DRAFT_STATE)
+    api.post("/chat", json={"thread_id": "t1", "message": "spec"})
+
+    revise_new_stats = [
+        {"stage": "codes", "model": "anthropic/claude-haiku-4.5",
+         "input_tokens": 300, "output_tokens": 50, "cost_usd": 0.0005},
+        {"stage": "draft", "model": "anthropic/claude-sonnet-5",
+         "input_tokens": 4200, "output_tokens": 1600, "cost_usd": 0.025},
+    ]
+    revise_state = {**DRAFT_STATE, "draft": "# Quote v2",
+                    "generation_stats": DRAFT_STATE["generation_stats"] + revise_new_stats}
+    g = _set_graph(monkeypatch, revise_state)
+    # get_state() (read before invoke()) reflects the checkpointer's state
+    # BEFORE this revision -- i.e. just v1's 2 entries; invoke() returns the
+    # fuller post-revision state including the 2 new ones.
+    g.get_state_override = {"generation_stats": DRAFT_STATE["generation_stats"]}
+
+    row = api.post("/quotes/1/revise", json={"feedback": "drop the sauna"}).json()
+    assert row["stage_outputs"]["generation_summary"]["total_cost_usd"] == pytest.approx(0.0495)
+
+    events = api.fake_store.generation_events
+    assert len(events) == 2  # v1's initial event, plus this revision's
+    revise_event = events[-1]
+    assert revise_event["trigger"] == "revise"
+    assert revise_event["llm_calls"] == 2  # only this revision's own 2 calls
+    assert revise_event["total_cost_usd"] == pytest.approx(0.0255)
 
 
 def test_chat_blocks_duplicate_property_before_expiry(api, monkeypatch):
@@ -285,7 +356,10 @@ UNPRICED_STATE = {**DRAFT_STATE,
 def _fake_draft_node(monkeypatch, captured, draft_md="# Quote v2 priced"):
     def fake(state):
         captured["price_resolution"] = state["price_resolution"]
-        return {"draft": draft_md, "routing_packet": None}
+        return {"draft": draft_md, "routing_packet": None,
+                "generation_stats": [{"stage": "draft", "model": "anthropic/claude-sonnet-5",
+                                      "input_tokens": 4000, "output_tokens": 1200,
+                                      "cost_usd": 0.02}]}
     monkeypatch.setattr("app.api.main.draft_node", fake)
 
 
@@ -313,6 +387,16 @@ def test_override_price_creates_new_version(api, monkeypatch):
 
     # old version superseded, audit row recorded
     assert api.get("/quotes/1").json()["status"] == "superseded"
+    # cumulative cost = v1's 0.024 (from DRAFT_STATE via UNPRICED_STATE) +
+    # this draft_node call's own 0.02; the dashboard event records only the
+    # latter (this event's own incremental contribution)
+    assert row["stage_outputs"]["generation_summary"]["total_cost_usd"] == pytest.approx(0.044)
+    events = api.fake_store.generation_events
+    assert len(events) == 2  # v1's initial event, plus this price override
+    override_event = events[-1]
+    assert override_event["trigger"] == "price_override"
+    assert override_event["total_cost_usd"] == pytest.approx(0.02)
+    assert override_event["llm_calls"] == 1
     audit = api.fake_store.price_overrides[0]
     assert audit == {"thread_id": "t1", "takeoff_line_ref": "t1",
                      "price_cad": 450, "note": "site visit quote",
@@ -459,3 +543,30 @@ def test_batch_override_rejects_duplicate_refs(api, monkeypatch):
         {"takeoff_line_ref": "t1", "price_cad": 300},
     ]})
     assert out.status_code == 400
+
+
+def test_generation_stats_endpoint_aggregates_and_lists_recent(api, monkeypatch):
+    """GET /quotes/generation-stats is the dashboard widget's one call --
+    backed by quote_generation_events, not LangSmith (see main.py's
+    generation_stats route docstring for why)."""
+    # Empty prior state on both calls -- a brand-new thread, so each event's
+    # own incremental slice is its FULL generation_stats list (the realistic
+    # "nothing existed on this thread before" case).
+    g1 = _set_graph(monkeypatch, DRAFT_STATE)
+    g1.get_state_override = {}
+    api.post("/chat", json={"thread_id": "t1", "message": "spec"})
+
+    revise_new_stats = [{"stage": "draft", "model": "anthropic/claude-sonnet-5",
+                         "input_tokens": 3000, "output_tokens": 900, "cost_usd": 0.018}]
+    g2 = _set_graph(monkeypatch, {**DRAFT_STATE, "draft": "# Quote v2",
+                                 "generation_stats": DRAFT_STATE["generation_stats"] + revise_new_stats})
+    g2.get_state_override = {"generation_stats": DRAFT_STATE["generation_stats"]}
+    api.post("/quotes/1/revise", json={"feedback": "n/a"})
+
+    out = api.get("/quotes/generation-stats")
+    assert out.status_code == 200
+    data = out.json()
+    assert data["totals"]["count"] == 2
+    assert data["totals"]["total_cost_usd"] == pytest.approx(0.042)  # 0.024 (initial) + 0.018 (revise)
+    assert len(data["recent"]) == 2
+    assert {e["trigger"] for e in data["recent"]} == {"initial", "revise"}
