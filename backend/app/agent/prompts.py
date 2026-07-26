@@ -233,15 +233,27 @@ range with "confirm on-site before finalizing" — that rate is confirmed but co
 - Every slot valued "unknown" appears under Assumptions (§5.11).
 - If flags are present, the draft OPENS with a "⚠ ESTIMATOR REVIEW REQUIRED" block listing \
 each flag_text verbatim, before any pricing content.
-- The draft MUST include a clearly labeled "TOTAL CONTRACT VALUE (pre-HST)" figure — this is \
-the single most important number for the estimator and must never be omitted, regardless of \
-how many categories or lines the draft has. Use the exact number given in TOTAL CONTRACT VALUE \
-below verbatim — it is summed in code from every line's "extended_quoted_cad", never recompute, \
-re-sum, or round it yourself. If TOTAL CONTRACT VALUE lists any excluded_unpriced_lines, state \
-plainly that the total excludes those lines (name them) and is not yet final.
+- Every numbered work category ends with its own "Category subtotal: $X" line (sum of that \
+category's own extended_quoted_cad figures) — this was already required and must keep appearing \
+per category, it is NOT replaced by the rule below.
+- Immediately after the last work category, the draft MUST include BOTH of the following — \
+neither replaces the other, and neither may be omitted regardless of how many categories or \
+lines the draft has: \
+(1) a "CATEGORY SUBTOTAL (pre-HST)" table with one row per numbered work category, restating \
+— never recomputing — the same "Category subtotal: $X" figure you already gave under that \
+category; \
+(2) a clearly labeled "TOTAL CONTRACT VALUE (pre-HST)" figure, which is the single most \
+important number for the estimator. Use the exact number given in TOTAL CONTRACT VALUE below \
+verbatim for (2) — it is summed in code from every line's "extended_quoted_cad", never \
+recompute, re-sum, or round it yourself (it will not equal a simple sum of the table in (1) \
+when some lines are priced under categories with no line items of their own, e.g. contract-\
+policy amounts — that's expected, don't force them to reconcile). If TOTAL CONTRACT VALUE lists \
+any excluded_unpriced_lines, state plainly that the total excludes those lines (name them) and \
+is not yet final.
 - Structure: flag block (if any) → project summary → work categories with line items \
 ({contractor_name}'s real quote format: numbered categories like SEPARATE ENTRANCE, PARTITIONS + \
-INSULATION, ONE FULL BATHROOM...) → TOTAL CONTRACT VALUE (pre-HST) → allowances table (tier \
+INSULATION, ONE FULL BATHROOM...) → CATEGORY SUBTOTAL (pre-HST) table + TOTAL CONTRACT VALUE \
+(pre-HST) → allowances table (tier \
 vocabulary: ESSENTIAL/SUPERIOR/SUPREME) → milestones & timeline (§5.4-5.5) → standard exclusions \
 (§5.7, with explicit counts/locations per §5.18) → Assumptions → citations appendix.
 
