@@ -12,7 +12,7 @@ from langchain_core.messages import (AIMessage, HumanMessage, SystemMessage,
                                      ToolMessage)
 from pydantic import ValidationError
 
-from app.agent import guidelines, prompts, schemas
+from app.agent import draft_render, guidelines, prompts, schemas
 from app.agent.llm import (codes_model, drafting_model, intake_model,
                           takeoff_model, takeoff_verifier_model)
 from app.agent.state import AgentState
@@ -108,8 +108,8 @@ def _usage_entry(stage: str, resp) -> dict:
 def _generation_summary(stats: list[dict]) -> dict:
     """Cumulative cost/usage for a quote's own detail view -- deterministic,
     computed in code from real per-call figures, never estimated. Same
-    philosophy as _total_contract_value: the pipeline computes the number,
-    the LLM/UI just displays it."""
+    philosophy as draft_render.total_contract_value: the pipeline computes
+    the number, the LLM/UI just displays it."""
     return {
         "total_cost_usd": round(sum(s["cost_usd"] for s in stats
                                     if s.get("cost_usd") is not None), 4),
@@ -523,7 +523,8 @@ def price_fill_node(state: AgentState) -> dict:
         unit = line.get("unit", "")
         desc = line.get("description", "")
         base = {"category": cat, "description": desc, "quantity": qty,
-                "unit": unit, "takeoff_line_ref": line.get("id", "")}
+                "unit": unit, "takeoff_line_ref": line.get("id", ""),
+                "instance": line.get("instance", "") or ""}
 
         priced_anything = False
         if item and item != allowance_item:
@@ -652,48 +653,41 @@ def price_fill_node(state: AgentState) -> dict:
     return {"price_resolution": rows}
 
 
-def _total_contract_value(price_resolution: list[dict]) -> dict:
-    """Deterministic grand total -- same computation the quote-accuracy eval
-    uses as ground truth (run_quote_accuracy_eval.py: sum extended_quoted_cad,
-    "or 0" so unpriced/tavily-no-price rows contribute nothing rather than
-    biasing the total). Computed in code and handed to the drafting LLM
-    verbatim rather than trusting it to sum a long, growing line-item list
-    itself -- the total was intermittently missing from drafts when left to
-    the LLM's own initiative (no prompt rule required it at all)."""
-    total = round(sum(r.get("extended_quoted_cad") or 0 for r in price_resolution), 2)
-    excluded = [r.get("description") or r.get("category") or r.get("takeoff_line_ref")
-               for r in price_resolution if not r.get("extended_quoted_cad")]
-    return {"total_contract_value_cad": total, "excluded_unpriced_lines": excluded}
-
-
 def draft_node(state: AgentState) -> dict:
-    """Stage 3: the cited quote draft, from the structured stage outputs plus
-    the contractor's guideline context (retrieved here, where it's used)."""
+    """Stage 3: render the deterministic quote document (draft_render.py)
+    and get the one remaining judgment call -- project summary + pricing
+    confidence, per §6.2 -- from a small structured-output LLM call. Every
+    dollar figure, section, heading, and citation is assembled in code from
+    already-computed data; nothing about document structure is left to the
+    model's discretion any more (see draft_render's module docstring for
+    why that mattered)."""
     s = state.get("slots", {})
     retrieved = {**state.get("retrieved", {}),
                  "builder_guideline": _pack(get_retriever().search_guidelines(
                      f"allowances rules of thumb {_tier(s) or ''} "
                      f"{s.get('scope', 'basement')}", k=4))}
-    price_resolution = state.get("price_resolution", [])
-    msgs = [SystemMessage(prompts.draft_system()),
-            ("user", prompts.draft_user(s,
-                                        state.get("flags", []),
-                                        retrieved,
-                                        state.get("codes_checklist"),
-                                        state.get("takeoff"),
-                                        price_resolution,
-                                        _total_contract_value(price_resolution)))]
-    feedback = state.get("estimator_feedback")
-    if feedback:
-        msgs.append(("user",
-                     "REVISION REQUEST from the reviewing estimator (not the "
-                     "client). Previous draft:\n\n"
-                     f"{state.get('draft') or '(none)'}\n\n"
-                     f"Requested changes:\n{feedback}\n\n"
-                     "Produce the complete revised quote, keeping the same "
-                     "citation discipline."))
-    resp = drafting_model().invoke(msgs)
-    draft = resp.content
+    takeoff = state.get("takeoff") or {}
+    stats: list[dict] = []
+    msgs = [SystemMessage(prompts.draft_narrative_system()),
+            HumanMessage(prompts.draft_narrative_user(
+                s, state.get("flags", []), retrieved, takeoff.get("assumptions") or []))]
+    m = drafting_model()
+    resp = m.invoke(msgs)
+    stats.append(_usage_entry("draft", resp))
+    narrative = _validated(schemas.DraftNarrative, resp.content, "project_summary")
+    if narrative is None:
+        retry = m.invoke(msgs + [resp, HumanMessage(_RETRY_JSON)])
+        stats.append(_usage_entry("draft", retry))
+        narrative = _validated(schemas.DraftNarrative, retry.content, "project_summary")
+    if narrative is None:
+        # Never block drafting on the narrative call -- degrade to a
+        # conservative, honest default rather than fabricate confidence.
+        narrative = schemas.DraftNarrative(
+            project_summary="Automated summary unavailable — see intake slots below.",
+            pricing_confidence="LOW",
+            confidence_reasons=["narrative generation failed — defaulting to "
+                                "conservative LOW confidence, verify manually"])
+    draft = draft_render.render_draft({**state, "retrieved": retrieved}, narrative)
     packet = None
     if state.get("flags"):
         packet = {"route": "flag",
@@ -702,7 +696,7 @@ def draft_node(state: AgentState) -> dict:
     return {"draft": draft, "routing_packet": packet,
             "estimator_feedback": None,
             "retrieved": retrieved,
-            "generation_stats": [_usage_entry("draft", resp)],
+            "generation_stats": stats,
             "messages": [AIMessage("Draft quote prepared — routed to the "
                                    "estimator for review before anything "
                                    "reaches you. (Draft attached below.)\n\n"
