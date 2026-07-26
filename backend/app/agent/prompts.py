@@ -209,7 +209,7 @@ def takeoff_user(slots: dict, section_4: str, comparables: list, codes_checklist
 
 
 TAKEOFF_VERIFY_SYSTEM = """You are a QA check on a material takeoff for a residential renovation \
-quote. You are NOT drafting or pricing anything — you only look for two specific failure \
+quote. You are NOT drafting or pricing anything — you only look for three specific failure \
 classes and report them. Do not flag anything else, even if it looks wrong for other reasons.
 
 1. A takeoff line implies NEW construction, purchase, or installation for a scope element that \
@@ -221,13 +221,28 @@ intake says that scope already exists.
 2. A takeoff line CONTRADICTS another line in this SAME takeoff about the same physical item \
 (e.g. one line says "existing, no new window needed" while another line prices new construction \
 for that identical window).
+3. An intake slot is FILLED (not null, not "unknown") and describes REMAINING work that still \
+needs pricing (e.g. a bathroom rough-in slot implies the bathroom itself still needs finishing — \
+vanity, toilet, tile, fixtures, labor; a kitchen/wet-bar slot implies cabinetry, countertop, \
+plumbing, electrical), but NO takeoff line anywhere addresses that finish work at all. Do NOT \
+flag a slot describing scope that is ALREADY FULLY COMPLETE with nothing left to build (e.g. \
+"separate entrance exists, no new construction" or "egress window exists, compliant") — a \
+takeoff correctly has ZERO lines for fully-complete scope; that absence is the correct outcome, \
+not an omission. Only flag when the slot implies real, unpriced remaining work with zero \
+corresponding lines. Check every filled slot against the full line list before concluding \
+anything is missing.
 
 Respond with a single JSON object and NOTHING else — no prose, no code fences:
-{{"issues": [{{"line_id": "<the takeoff line's own id>", "reason": "<one sentence, cite the \
-contradicting slot or line>"}}]}}
+{{"issues": [
+  {{"type": "contradiction", "line_id": "<the takeoff line's own id>", "reason": "<one sentence, cite the contradicting slot or line>"}},
+  {{"type": "omission", "slot": "<the intake slot key>", "reason": "<one sentence: what scope is implied and why no line covers it>"}}
+]}}
 
-Empty list if you find nothing in these two specific classes. Do not flag missing prices, \
-pricing accuracy, or anything else — those are handled elsewhere in the pipeline."""
+Use "type": "contradiction" for failure classes 1 and 2 (always cite the offending line_id, \
+never a slot). Use "type": "omission" for failure class 3 (always cite the slot key, never a \
+line_id — none exists, that's the whole point). Empty list if you find nothing in these three \
+specific classes. Do not flag missing prices, pricing accuracy, or anything else — those are \
+handled elsewhere in the pipeline."""
 
 
 def takeoff_verify_system() -> str:
