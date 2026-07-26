@@ -259,6 +259,42 @@ def test_takeoff_node_passes_eval_exclusion_hook_when_present(monkeypatch):
     assert quote_call2["exclude_project_codes"] is None
 
 
+def test_takeoff_line_rejects_out_of_vocabulary_category():
+    """TakeoffLine.category is a closed Literal (app/pricing/quote_sections.py
+    needs every value mapped to a document section) -- an invented category
+    must fail validation, not silently pass through as free text."""
+    from pydantic import ValidationError
+
+    from app.agent import schemas
+    with pytest.raises(ValidationError):
+        schemas.TakeoffLine(category="not_a_real_category", quantity=1, unit="each")
+
+
+def test_takeoff_line_accepts_every_canonical_category_and_defaults_instance_empty():
+    from typing import get_args
+
+    from app.agent import schemas
+    for cat in get_args(schemas.TakeoffCategory):
+        line = schemas.TakeoffLine(category=cat, quantity=1, unit="each")
+        assert line.instance == ""
+
+
+def test_takeoff_node_degrades_to_none_on_out_of_vocabulary_category(monkeypatch):
+    """An invented category from the LLM must trigger the existing
+    retry-then-degrade path (via _validated's ValidationError handling), the
+    same as any other malformed takeoff output -- never a raised exception
+    that blocks drafting."""
+    _patch_stage_retrievers(monkeypatch)
+    bad_json = json.dumps({"gfa_sqft": 900, "lines": [
+        {"category": "not_a_real_category", "quantity": 1, "unit": "each"}],
+        "assumptions": []})
+    model = _FakeStageModel(SimpleNamespace(content=bad_json),
+                            SimpleNamespace(content=bad_json))
+    monkeypatch.setattr(nodes, "takeoff_model", lambda: model)
+    out = takeoff_node({"slots": {"scope": "basement"}})
+    assert out["takeoff"] is None
+
+
 def test_takeoff_node_degrades_to_none_on_unparseable_output(monkeypatch):
     _patch_stage_retrievers(monkeypatch)
     model = _FakeStageModel(SimpleNamespace(content="no json"),
