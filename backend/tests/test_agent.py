@@ -573,6 +573,30 @@ def test_price_fill_allowance_missing_row_falls_back_and_can_still_be_unpriced(m
     assert row["allowance_item"] == "nonexistent"
 
 
+def test_price_fill_same_item_and_allowance_key_prices_once_not_twice(monkeypatch):
+    """Confirmed live across 22 real quotes / 43 lines: the takeoff routinely
+    sets item == allowance_item for finish items (doors, baseboards, the
+    egress window, etc.), and since the allowance table has no distinct $
+    entry for those keys, both branches fell back to the identical
+    material-sheet price -- silently double-charging 6-15% of every quote's
+    total. Must collapse to exactly one row."""
+    monkeypatch.setattr(nodes.settings, "tavily_api_key", "")
+    monkeypatch.setattr(nodes.allowances, "lookup", lambda c, i: None)
+
+    class _FakeMaterialRow:
+        price_low_cad, price_high_cad, unit, source = 180.0, 320.0, "per_door_cad", "supplier list"
+        updated_at = __import__("datetime").date(2026, 6, 15)
+    monkeypatch.setattr(nodes.materials, "lookup", lambda c, i: _FakeMaterialRow())
+
+    out = price_fill_node(_takeoff_state(
+        {"id": "t9", "category": "doors", "item": "interior",
+         "allowance_item": "interior", "quantity": 1, "unit": "each"},
+        slots={"package_tier_budget": "essential, ~50k"}))
+    rows = out["price_resolution"]
+    assert len(rows) == 1
+    assert rows[0]["extended_quoted_cad"] == 250.0
+
+
 # --- draft total: computed in code, never left to the LLM's own summation ---
 
 def test_total_contract_value_sums_priced_rows_and_lists_excluded():
@@ -663,6 +687,111 @@ def test_takeoff_node_no_injection_when_code_item_covered(monkeypatch):
     assert out["takeoff"]["lines"][0]["id"] == "t1"  # ids assigned in code
 
 
+# --- takeoff verifier: catches new-construction-vs-existing-scope and ------
+# --- self-contradiction, with a bounded retry before neutralizing ----------
+
+def test_verify_takeoff_node_parses_issues(monkeypatch):
+    from app.agent.nodes import verify_takeoff_node
+    model = _FakeStageModel(SimpleNamespace(
+        content='{"issues": [{"line_id": "t1", "reason": "contradicts existing egress slot"}]}'))
+    monkeypatch.setattr(nodes, "takeoff_verifier_model", lambda: model)
+    out = verify_takeoff_node({"slots": {}, "takeoff": {"lines": [{"id": "t1"}]}})
+    assert out["takeoff_issues"] == [{"line_id": "t1", "reason": "contradicts existing egress slot"}]
+    assert out["takeoff_verify_attempts"] == 1
+
+
+def test_verify_takeoff_node_degrades_on_unparseable_output(monkeypatch):
+    from app.agent.nodes import verify_takeoff_node
+    model = _FakeStageModel(SimpleNamespace(content="not json at all"))
+    monkeypatch.setattr(nodes, "takeoff_verifier_model", lambda: model)
+    out = verify_takeoff_node({"slots": {}, "takeoff": {"lines": [{"id": "t1"}]}})
+    assert out == {"takeoff_issues": [], "takeoff_verify_attempts": 1}
+
+
+def test_verify_takeoff_node_skips_llm_when_no_takeoff(monkeypatch):
+    from app.agent.nodes import verify_takeoff_node
+
+    def _explode():
+        raise AssertionError("must not call the verifier with no takeoff to check")
+    monkeypatch.setattr(nodes, "takeoff_verifier_model", _explode)
+    out = verify_takeoff_node({"slots": {}, "takeoff": None, "takeoff_verify_attempts": 2})
+    assert out == {"takeoff_issues": [], "takeoff_verify_attempts": 3}
+
+
+_BAD_TAKEOFF = json.dumps({"gfa_sqft": 900, "lines": [
+    {"category": "windows", "item": "egress_window", "quantity": 1, "unit": "each",
+     "description": "New egress window + concrete cutting for window well"}],
+    "assumptions": []})
+_GOOD_TAKEOFF = json.dumps({"gfa_sqft": 900, "lines": [
+    {"category": "windows", "item": "egress_window", "quantity": 1, "unit": "each",
+     "description": "Egress window, existing, verify compliance only"}],
+    "assumptions": []})
+_FLAGGED = '{"issues": [{"line_id": "t1", "reason": "prices new construction for a window intake marks as existing"}]}'
+_CLEAR = '{"issues": []}'
+
+
+def _mock_pipeline_models(monkeypatch, takeoff_responses, verify_responses):
+    # Each *_model() call is a factory in the real code (a fresh ChatOpenAI
+    # instance every time) -- but the fake here must be the SAME stateful
+    # instance across calls, or every retry would see the response list
+    # reset back to the first entry instead of advancing.
+    _patch_stage_retrievers(monkeypatch)
+    monkeypatch.setattr(nodes.settings, "tavily_api_key", "")
+    codes_fake = _FakeStageModel(SimpleNamespace(content=_codes_json(), tool_calls=[]))
+    takeoff_fake = _FakeStageModel(*[SimpleNamespace(content=r) for r in takeoff_responses])
+    verify_fake = _FakeStageModel(*[SimpleNamespace(content=r) for r in verify_responses])
+    draft_fake = _FakeStageModel(SimpleNamespace(content="# Quote"))
+    monkeypatch.setattr(nodes, "codes_model", lambda: codes_fake)
+    monkeypatch.setattr(nodes, "takeoff_model", lambda: takeoff_fake)
+    monkeypatch.setattr(nodes, "takeoff_verifier_model", lambda: verify_fake)
+    monkeypatch.setattr(nodes, "drafting_model", lambda: draft_fake)
+
+    class _FakeMaterialRow:
+        price_low_cad, price_high_cad, unit, source = 3500.0, 6500.0, "per_opening_cad", "sub-trade quote"
+        updated_at = __import__("datetime").date.today()
+    monkeypatch.setattr(nodes.materials, "lookup", lambda c, i: _FakeMaterialRow())
+    monkeypatch.setattr(nodes.allowances, "lookup", lambda c, i: None)
+
+
+def test_graph_takeoff_retry_resolves_on_second_attempt(monkeypatch):
+    """Verifier flags the first takeoff, the retry produces a corrected one,
+    verifier clears it -- prices normally, no neutralization, exactly one
+    retry (not looping again once resolved)."""
+    from langgraph.checkpoint.memory import InMemorySaver
+    from app.agent.graph import build_graph
+    _mock_pipeline_models(monkeypatch,
+                         takeoff_responses=[_BAD_TAKEOFF, _GOOD_TAKEOFF],
+                         verify_responses=[_FLAGGED, _CLEAR])
+    g = build_graph(checkpointer=InMemorySaver())
+    out = g.invoke({"estimator_feedback": "n/a", "slots": {"scope": "finished basement"}},
+                   {"configurable": {"thread_id": "retry-ok"}})
+    assert out["takeoff_issues"] == []
+    assert out["takeoff_verify_attempts"] == 2
+    row = out["price_resolution"][0]
+    assert row["price_source"] == "price_sheet"  # priced normally, not neutralized
+    assert row["extended_quoted_cad"]
+
+
+def test_graph_takeoff_retry_exhausted_neutralizes_flagged_line(monkeypatch):
+    """Verifier keeps flagging the same line past the retry cap -- takeoff
+    is attempted exactly twice (the _FakeStageModel raises on a 3rd .invoke()
+    with no responses left, so an extra retry would fail this test), and the
+    still-flagged line is neutralized instead of reaching the total priced."""
+    from langgraph.checkpoint.memory import InMemorySaver
+    from app.agent.graph import build_graph
+    _mock_pipeline_models(monkeypatch,
+                         takeoff_responses=[_BAD_TAKEOFF, _BAD_TAKEOFF],
+                         verify_responses=[_FLAGGED, _FLAGGED])
+    g = build_graph(checkpointer=InMemorySaver())
+    out = g.invoke({"estimator_feedback": "n/a", "slots": {"scope": "finished basement"}},
+                   {"configurable": {"thread_id": "retry-exhausted"}})
+    assert out["takeoff_verify_attempts"] == 2
+    row = out["price_resolution"][0]
+    assert row["price_source"] == "unpriced"
+    assert row["extended_quoted_cad"] is None
+    assert "verifier flagged" in row["note"]
+
+
 # --- graph wiring ------------------------------------------------------------
 
 def test_graph_compiles_and_routes_hard(monkeypatch):
@@ -710,6 +839,9 @@ def test_graph_revision_entry_skips_intake(monkeypatch):
             return SimpleNamespace(content="# Quote v2")
     monkeypatch.setattr(nodes, "takeoff_model", lambda: _FakeDrafter())
     monkeypatch.setattr(nodes, "drafting_model", lambda: _FakeDrafter())
+    monkeypatch.setattr(nodes, "takeoff_verifier_model",
+                        lambda: SimpleNamespace(invoke=lambda msgs: SimpleNamespace(
+                            content='{"issues": []}')))
 
     g = build_graph(checkpointer=InMemorySaver())
     out = g.invoke({"messages": [HumanMessage("[estimator revision request] drop the sauna")],

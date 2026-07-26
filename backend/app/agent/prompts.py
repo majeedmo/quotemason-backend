@@ -148,6 +148,10 @@ that vary by package tier (cabinets, countertops, tile, fixtures, hardware) — 
 for those; "item" is for structural/generic materials with one market price regardless of tier.
 - Use the KNOWN MATERIAL PRICE-SHEET ITEM KEYS, KNOWN LABOR TRADE KEYS, and KNOWN ALLOWANCE \
 ITEM KEYS whenever one fits — exact spelling; a mismatched key cannot be priced downstream.
+- Never set "item" and "allowance_item" to the SAME key on one line — they are priced as two \
+independent rows downstream, so the identical key in both fields double-charges that one \
+physical thing. Pick whichever field actually applies (allowance_item for a tier-varying \
+finish, item for a generic/structural material) — never both for the same key.
 - Never invent a "bathroom_build" labor line AND itemize that same bathroom's \
 electrical/plumbing/tiling/drywall trade lines — pick one representation, not both, or the \
 cost double-counts.
@@ -176,7 +180,8 @@ def takeoff_system() -> str:
 
 def takeoff_user(slots: dict, section_4: str, comparables: list, codes_checklist: dict,
                  item_keys: list[str], trade_keys: list[str], allowance_keys: list[str],
-                 feedback: str | None = None) -> str:
+                 feedback: str | None = None,
+                 verifier_feedback: dict | None = None) -> str:
     comp = "\n\n".join(f"--- {c['citation']}\n{c['text']}" for c in comparables)
     parts = [f"INTAKE SLOTS:\n{json.dumps(slots, indent=2)}",
              f"=== GUIDELINE §4 — MATERIAL CALCULATION RULES OF THUMB ===\n{section_4}",
@@ -190,7 +195,48 @@ def takeoff_user(slots: dict, section_4: str, comparables: list, codes_checklist
     if feedback:
         parts.append("ESTIMATOR REVISION REQUEST (apply scope/quantity changes):\n"
                      + feedback)
+    if verifier_feedback:
+        parts.append(
+            "AUTOMATED TAKEOFF VERIFICATION found problems with your previous attempt "
+            "(NOT estimator feedback — an automated consistency check). Fix every issue "
+            "listed: either the line implies new construction/purchase/installation for "
+            "something an intake slot says already exists, or it contradicts another line "
+            "in your own previous takeoff about the same physical item. Produce a complete "
+            "corrected takeoff, not a diff.\n\n"
+            f"ISSUES FOUND:\n{json.dumps(verifier_feedback['issues'], indent=2)}\n\n"
+            f"YOUR PREVIOUS TAKEOFF:\n{json.dumps(verifier_feedback['previous_takeoff'], indent=2)}")
     return "\n\n".join(parts)
+
+
+TAKEOFF_VERIFY_SYSTEM = """You are a QA check on a material takeoff for a residential renovation \
+quote. You are NOT drafting or pricing anything — you only look for two specific failure \
+classes and report them. Do not flag anything else, even if it looks wrong for other reasons.
+
+1. A takeoff line implies NEW construction, purchase, or installation for a scope element that \
+an intake slot explicitly states ALREADY EXISTS (e.g. the slot says a separate entrance or an \
+egress window already exists, but a line prices cutting concrete/installing a new door/building \
+a new window well for that same element). Comparable-past-project quantities are not an excuse — \
+a comparable project's new-construction scope must not be copied in when THIS project's own \
+intake says that scope already exists.
+2. A takeoff line CONTRADICTS another line in this SAME takeoff about the same physical item \
+(e.g. one line says "existing, no new window needed" while another line prices new construction \
+for that identical window).
+
+Respond with a single JSON object and NOTHING else — no prose, no code fences:
+{{"issues": [{{"line_id": "<the takeoff line's own id>", "reason": "<one sentence, cite the \
+contradicting slot or line>"}}]}}
+
+Empty list if you find nothing in these two specific classes. Do not flag missing prices, \
+pricing accuracy, or anything else — those are handled elsewhere in the pipeline."""
+
+
+def takeoff_verify_system() -> str:
+    return TAKEOFF_VERIFY_SYSTEM.format()
+
+
+def takeoff_verify_user(slots: dict, takeoff: dict) -> str:
+    return (f"INTAKE SLOTS:\n{json.dumps(slots, indent=2)}\n\n"
+            f"MATERIAL TAKEOFF TO CHECK:\n{json.dumps(takeoff, indent=2)}")
 
 
 DRAFT_SYSTEM = """You are the quote drafter for {contractor_name}, a licensed residential \

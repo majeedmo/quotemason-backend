@@ -57,8 +57,8 @@ These are the questions that most swing basement price. Each slot is `filled | e
 
 1. **Scope: finished basement or legal accessory unit?** Splits the entire quote template (§1); accessory adds $15k–$40k of code-driven items.
 2. **Total basement GFA (sqft)?** Primary driver of framing, drywall, flooring, paint. Real projects run 700–2,000 sqft.
-3. **Separate/below-grade entrance needed?** Concrete cutting + excavation + door: one of the largest single line items ($10k–$25k range).
-4. **Bedrooms — how many, and does each have a code-size egress window or door?** Each missing egress window = concrete cutting + window + well + drainage (§6, OBC 9.9.10).
+3. **Separate/below-grade entrance: does one already exist, or does the project need to build one?** Concrete cutting + excavation + door: one of the largest single line items ($10k–$25k range) — but ONLY when building new. If a separate entrance already exists, record that explicitly (e.g. "separate entrance exists, no new construction") — never leave this as a bare yes/no, since "yes" alone doesn't say whether it's existing or new and downstream stages will otherwise price new-construction items for scope that's already built.
+4. **Bedrooms — how many, and for each, does it ALREADY have a code-size egress window/door, or does one need to be added?** A NEW egress window = concrete cutting + window + well + drainage (§6, OBC 9.9.10); an EXISTING compliant egress needs no new construction, only a compliance-verification line — record which case applies explicitly, don't just note the bedroom count.
 5. **Bathroom: existing rough-in below slab, or new?** Existing rough-in nearby vs. breaking slab swings plumbing 30–50%.
 6. **Kitchen or wet bar? Gas or electric stove?** Full kitchen adds cabinetry allowance, counters, exhaust rough-in, possibly gas line.
 7. **Ceiling height and bulkheads/ducts?** Under ~7 ft finished (see OBC 9.5.3 extract for exact minimums) may need duct relocation or is a feasibility flag; gas line to flex-pipe conversion avoids ceiling drops.

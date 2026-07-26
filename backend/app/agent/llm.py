@@ -14,6 +14,7 @@ _FALLBACKS = {  # brief, Task 2 model table
     "codes": ["google/gemini-2.5-flash"],
     "drafting": ["openai/gpt-5.1"],
     "takeoff": ["google/gemini-2.5-flash"],
+    "takeoff_verify": ["google/gemini-2.5-flash"],
 }
 
 
@@ -52,3 +53,13 @@ def takeoff_model() -> ChatOpenAI:
     quote-accuracy eval before trusting it (see docs/capstone-progress.md);
     draft stays on drafting_model regardless."""
     return _chat(settings.takeoff_model, "takeoff", temperature=0.1)
+
+
+def takeoff_verifier_model() -> ChatOpenAI:
+    """Second, cheap pass that cross-checks the takeoff against intake slots
+    and against itself (contradicting scope already marked as existing, or
+    contradicting another line in the same takeoff) -- a bounded check over
+    structured JSON already in hand, not a task needing a bigger/reasoning
+    model. Own settings.takeoff_verifier_model, same reasoning as
+    takeoff_model's split from intake_model."""
+    return _chat(settings.takeoff_verifier_model, "takeoff_verify", temperature=0.0)
