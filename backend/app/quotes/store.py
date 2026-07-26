@@ -67,6 +67,30 @@ CREATE TABLE IF NOT EXISTS price_overrides (
 );
 CREATE INDEX IF NOT EXISTS idx_price_overrides_thread
     ON price_overrides (thread_id);
+
+-- One row per generation event (initial draft, each revision, each price
+-- override) -- not per LLM call, that granularity stays in
+-- quote_drafts.stage_outputs.generation_stats for drill-down. Per-event,
+-- incremental values only, so dashboard aggregation (SUM/AVG over a time
+-- window) is plain arithmetic with no cumulative-double-counting risk.
+CREATE TABLE IF NOT EXISTS quote_generation_events (
+    id                SERIAL PRIMARY KEY,
+    quote_id          INTEGER NOT NULL,
+    thread_id         TEXT NOT NULL,
+    version           INTEGER NOT NULL,
+    trigger           TEXT NOT NULL,
+    duration_seconds  NUMERIC NOT NULL,
+    cost_usd          NUMERIC,
+    cost_is_complete  BOOLEAN NOT NULL DEFAULT TRUE,
+    input_tokens      INTEGER NOT NULL DEFAULT 0,
+    output_tokens     INTEGER NOT NULL DEFAULT 0,
+    llm_calls         INTEGER NOT NULL DEFAULT 0,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_quote_generation_events_created_at
+    ON quote_generation_events (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_quote_generation_events_thread_id
+    ON quote_generation_events (thread_id);
 """
 
 # Guardrail queries (find_active_duplicate, count_recent_properties_for_contact)
@@ -186,6 +210,42 @@ class QuoteStore:
                 (thread_id, takeoff_line_ref, price_cad, note,
                  price_source_before, source_quote_id, result_quote_id),
             ).fetchone()
+
+    def record_generation_event(self, quote_id: int, thread_id: str, version: int,
+                                trigger: str, duration_seconds: float,
+                                total_cost_usd: float | None, cost_is_complete: bool,
+                                total_input_tokens: int, total_output_tokens: int,
+                                llm_calls: int) -> dict[str, Any]:
+        """Append-only dashboard row for one generation event (initial draft,
+        a revision, or a price override) -- this event's own incremental
+        cost/usage, not the quote's running cumulative total."""
+        with self._conn() as c:
+            return c.execute(
+                "INSERT INTO quote_generation_events (quote_id, thread_id, version, "
+                "trigger, duration_seconds, cost_usd, cost_is_complete, input_tokens, "
+                "output_tokens, llm_calls) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                "RETURNING *",
+                (quote_id, thread_id, version, trigger, duration_seconds,
+                 total_cost_usd, cost_is_complete, total_input_tokens,
+                 total_output_tokens, llm_calls),
+            ).fetchone()
+
+    def generation_dashboard_stats(self, since: datetime, limit: int = 10) -> dict[str, Any]:
+        """Aggregate totals + a recent-events list for the dashboard widget,
+        one query pair serving both."""
+        with self._conn() as c:
+            totals = c.execute(
+                "SELECT COUNT(*) AS count, "
+                "COALESCE(SUM(cost_usd), 0) AS total_cost_usd, "
+                "COALESCE(AVG(duration_seconds), 0) AS avg_duration_seconds, "
+                "COALESCE(AVG(cost_usd), 0) AS avg_cost_usd "
+                "FROM quote_generation_events WHERE created_at > %s",
+                (since,)).fetchone()
+            recent = c.execute(
+                "SELECT * FROM quote_generation_events WHERE created_at > %s "
+                "ORDER BY created_at DESC LIMIT %s",
+                (since, limit)).fetchall()
+            return {"totals": totals, "recent": recent}
 
     def approve(self, quote_id: int) -> dict[str, Any] | None:
         with self._conn() as c:

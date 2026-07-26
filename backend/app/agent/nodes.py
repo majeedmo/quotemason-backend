@@ -89,6 +89,37 @@ def _tag_routing(level: str, categories: list[str]) -> None:
         pass
 
 
+def _usage_entry(stage: str, resp) -> dict:
+    """Per-call LLM usage/cost, read live off the fresh response object right
+    after .invoke() -- OpenRouter's own billed cost (response_metadata's
+    token_usage.cost) is reliable read this way; it's only re-reading it
+    LATER from a LangSmith trace that's documented as flaky. Degrades to
+    zeros/None for test doubles lacking these attributes (a bare
+    SimpleNamespace(content=...) fake), never raises."""
+    usage = getattr(resp, "usage_metadata", None) or {}
+    meta = getattr(resp, "response_metadata", None) or {}
+    token_usage = meta.get("token_usage", {}) or {}
+    return {"stage": stage, "model": meta.get("model_name", ""),
+            "input_tokens": usage.get("input_tokens", 0),
+            "output_tokens": usage.get("output_tokens", 0),
+            "cost_usd": token_usage.get("cost")}
+
+
+def _generation_summary(stats: list[dict]) -> dict:
+    """Cumulative cost/usage for a quote's own detail view -- deterministic,
+    computed in code from real per-call figures, never estimated. Same
+    philosophy as _total_contract_value: the pipeline computes the number,
+    the LLM/UI just displays it."""
+    return {
+        "total_cost_usd": round(sum(s["cost_usd"] for s in stats
+                                    if s.get("cost_usd") is not None), 4),
+        "cost_is_complete": all(s.get("cost_usd") is not None for s in stats),
+        "total_input_tokens": sum(s.get("input_tokens", 0) for s in stats),
+        "total_output_tokens": sum(s.get("output_tokens", 0) for s in stats),
+        "llm_calls": len(stats),
+    }
+
+
 def intake_node(state: AgentState) -> dict:
     last_user = next((m for m in reversed(state["messages"])
                       if m.type == "human"), None)
@@ -97,7 +128,8 @@ def intake_node(state: AgentState) -> dict:
     msgs = ([SystemMessage(prompts.intake_system())] + state["messages"]
             + [SystemMessage(f"deterministic_hits: {json.dumps(det_hits)}\n"
                              f"slots_so_far: {json.dumps(state.get('slots', {}))}")])
-    out = _parse_intake(intake_model().invoke(msgs).content)
+    resp = intake_model().invoke(msgs)
+    out = _parse_intake(resp.content)
 
     slots = {**state.get("slots", {}),
              **{k: v for k, v in (out.get("slots") or {}).items() if v is not None}}
@@ -122,7 +154,8 @@ def intake_node(state: AgentState) -> dict:
             "slots": slots, "flags": flags,
             "trigger": {"level": level, "categories": categories,
                         "matched": matched},
-            "_action": action}
+            "_action": action,
+            "generation_stats": [_usage_entry("intake", resp)]}
 
 
 def hard_route_node(state: AgentState) -> dict:
@@ -183,6 +216,7 @@ def codes_node(state: AgentState) -> dict:
     seeds = regulatory.applicable_codes(s)
     tool_rows: list[dict] = []
     checklist = None
+    stats: list[dict] = []
     try:
         tools = {t.name: t for t in regulatory.REGULATORY_TOOLS}
         bound = codes_model().bind_tools(regulatory.REGULATORY_TOOLS)
@@ -190,6 +224,7 @@ def codes_node(state: AgentState) -> dict:
                 HumanMessage(prompts.codes_user(
                     s, seeds, state.get("estimator_feedback")))]
         resp = bound.invoke(msgs)
+        stats.append(_usage_entry("codes", resp))
         for _ in range(3):
             calls = getattr(resp, "tool_calls", None) or []
             if not calls:
@@ -206,13 +241,16 @@ def codes_node(state: AgentState) -> dict:
                 msgs.append(ToolMessage(json.dumps(result, default=str),
                                         tool_call_id=tc.get("id", "")))
             resp = bound.invoke(msgs)
+            stats.append(_usage_entry("codes", resp))
         if getattr(resp, "tool_calls", None):
             # still asking after the cap — force a final, tool-free answer
             resp = codes_model().invoke(msgs + [HumanMessage(_RETRY_JSON)])
+            stats.append(_usage_entry("codes", resp))
         checklist = _validated(schemas.CodesChecklist, resp.content, "items")
         if checklist is None:
             retry = codes_model().invoke(
                 msgs + [resp, HumanMessage(_RETRY_JSON)])
+            stats.append(_usage_entry("codes", retry))
             checklist = _validated(schemas.CodesChecklist, retry.content, "items")
     except Exception:
         logger.exception("codes stage failed — using deterministic checklist")
@@ -246,7 +284,8 @@ def codes_node(state: AgentState) -> dict:
             # /revise on an already-flagged thread could inherit a stale
             # attempt count from the checkpointer and skip the retry it
             # should get.
-            "takeoff_issues": [], "takeoff_verify_attempts": 0}
+            "takeoff_issues": [], "takeoff_verify_attempts": 0,
+            "generation_stats": stats}
 
 
 def _enforce_code_coverage(takeoff: schemas.Takeoff,
@@ -289,6 +328,7 @@ def takeoff_node(state: AgentState) -> dict:
     allowance_keys = sorted(f"{c}/{i}" for c, i in allowances.load_allowances())
     checklist_dict = state.get("codes_checklist") or {}
     takeoff = None
+    stats: list[dict] = []
     prior_issues = state.get("takeoff_issues")
     verifier_feedback = ({"issues": prior_issues, "previous_takeoff": state.get("takeoff")}
                          if prior_issues else None)
@@ -300,9 +340,11 @@ def takeoff_node(state: AgentState) -> dict:
                     state.get("estimator_feedback"), verifier_feedback))]
         m = takeoff_model()
         resp = m.invoke(msgs)
+        stats.append(_usage_entry("takeoff", resp))
         takeoff = _validated(schemas.Takeoff, resp.content, "lines")
         if takeoff is None:
             retry = m.invoke(msgs + [resp, HumanMessage(_RETRY_JSON)])
+            stats.append(_usage_entry("takeoff", retry))
             takeoff = _validated(schemas.Takeoff, retry.content, "lines")
     except Exception:
         logger.exception("takeoff stage failed — drafting from raw context")
@@ -314,7 +356,8 @@ def takeoff_node(state: AgentState) -> dict:
                                    schemas.CodesChecklist.model_validate(checklist_dict))
     return {"takeoff": takeoff.model_dump() if takeoff else None,
             "retrieved": {**state.get("retrieved", {}),
-                          "past_project_quote": comparables}}
+                          "past_project_quote": comparables},
+            "generation_stats": stats}
 
 
 def _normalize_verify_issue(i: dict) -> dict | None:
@@ -349,19 +392,22 @@ def verify_takeoff_node(state: AgentState) -> dict:
     takeoff = state.get("takeoff")
     attempts = state.get("takeoff_verify_attempts", 0) + 1
     issues: list[dict] = []
+    stats: list[dict] = []
     if takeoff:
         try:
             msgs = [SystemMessage(prompts.takeoff_verify_system()),
                     HumanMessage(prompts.takeoff_verify_user(
                         state.get("slots", {}), takeoff))]
             resp = takeoff_verifier_model().invoke(msgs)
+            stats.append(_usage_entry("takeoff_verify", resp))
             parsed = _parse_json_block(resp.content, required_key="issues")
             if parsed and isinstance(parsed.get("issues"), list):
                 issues = [n for i in parsed["issues"]
                          if (n := _normalize_verify_issue(i)) is not None]
         except Exception:
             logger.exception("takeoff verification failed — proceeding without it")
-    return {"takeoff_issues": issues, "takeoff_verify_attempts": attempts}
+    return {"takeoff_issues": issues, "takeoff_verify_attempts": attempts,
+            "generation_stats": stats}
 
 
 _LABOR_LUMP_UNITS = {"lump_sum"}
@@ -621,7 +667,8 @@ def draft_node(state: AgentState) -> dict:
                      f"Requested changes:\n{feedback}\n\n"
                      "Produce the complete revised quote, keeping the same "
                      "citation discipline."))
-    draft = drafting_model().invoke(msgs).content
+    resp = drafting_model().invoke(msgs)
+    draft = resp.content
     packet = None
     if state.get("flags"):
         packet = {"route": "flag",
@@ -630,6 +677,7 @@ def draft_node(state: AgentState) -> dict:
     return {"draft": draft, "routing_packet": packet,
             "estimator_feedback": None,
             "retrieved": retrieved,
+            "generation_stats": [_usage_entry("draft", resp)],
             "messages": [AIMessage("Draft quote prepared — routed to the "
                                    "estimator for review before anything "
                                    "reaches you. (Draft attached below.)\n\n"
