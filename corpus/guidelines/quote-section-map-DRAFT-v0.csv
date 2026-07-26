@@ -1,0 +1,18 @@
+category,section_number,section_heading,notes
+demolition,3,Demolition & Site Prep,
+windows,4,Separate Entrance & Windows,
+framing,5,Partitions + Insulation,
+insulation,5,Partitions + Insulation,
+drywall,5,Partitions + Insulation,drywall is part of the wall assembly -- not its own heading
+flooring,6,Flooring & Stairs,covers baseboards -- a flooring-category item
+subfloor,6,Flooring & Stairs,
+concrete,6,Flooring & Stairs,self-leveling bags are subfloor prep
+stairs,6,Flooring & Stairs,
+bathroom,7,Bathroom(s),
+kitchen,8,Wet Bar/Kitchenette/Kitchen,
+plumbing,9,Plumbing (Code-Driven),
+paint,10,Primer + Paint,
+electrical,11,Electrical,
+hvac,12,HVAC/Gas,
+doors,13,Millwork/Doors + Trim,
+code_required,16,Misc,TEMP -- routes to Misc until code-checklist items carry their real target section (see plan); these are real dollar-relevant lines so this is a known gap, not a resting place

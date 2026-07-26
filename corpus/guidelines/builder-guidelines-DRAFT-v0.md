@@ -42,7 +42,7 @@ Anything outside these two scopes (new build, addition, kitchen/bath makeover up
 
 Three named tiers: **ESSENTIAL / SUPERIOR / SUPREME**. Tier controls finish level and allowances, **not** code compliance — code items (§7) are driven by scope, never dropped for a lower tier. [GROUNDED]
 
-Work categories used in every quote (keep these headings — they are the quote schema): **Architectural/Permit · Separate Entrance & Windows · Kitchen · Bathroom(s) · Flooring & Stairs · Primer + Paint · Partitions + Insulation · Millwork · Electrical · Plumbing · HVAC/Gas · Cold Storage · Project Management · Misc.** [GROUNDED]
+Work categories used in every quote (keep these headings, in this order — they are the quote schema; every one of them appears on every quote, even at $0.00 with a stated reason when not applicable to the project): **Architectural/Permit · Demolition & Site Prep · Separate Entrance & Windows · Partitions + Insulation · Flooring & Stairs · Bathroom(s) · Wet Bar/Kitchenette/Kitchen · Plumbing (Code-Driven) · Primer + Paint · Electrical · HVAC/Gas · Millwork/Doors + Trim · Cold Storage · Project Management · Misc.** A category with more than one physical instance on the project (e.g. two bathrooms) repeats its heading once per instance rather than merging them into one section. [GROUNDED, extended 2026-07-26 to add Demolition & Site Prep — every real quote in the corpus prices demolition, the original 14-heading list omitted it]
 
 Tier deltas (detail in `material-allowances-DRAFT-v0.csv`): [GROUNDED]
 
