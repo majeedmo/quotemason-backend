@@ -61,6 +61,16 @@ class PriceOverrideIn(BaseModel):
     note: str | None = None
 
 
+class PriceOverrideItem(BaseModel):
+    takeoff_line_ref: str
+    price_cad: float = Field(gt=0)
+    note: str | None = None
+
+
+class PriceOverridesIn(BaseModel):
+    overrides: list[PriceOverrideItem] = Field(min_length=1)
+
+
 class LoginIn(BaseModel):
     username: str
     password: str
@@ -102,6 +112,24 @@ def _log_price_override_to_langsmith(row: dict, takeoff_line_ref: str,
         pass
 
 
+def _log_price_overrides_batch_to_langsmith(row: dict, overrides: list) -> None:
+    if not settings.langsmith_api_key:
+        return
+    try:
+        from langsmith import Client
+        Client(api_key=settings.langsmith_api_key).create_run(
+            name="estimator_price_overrides_batch", run_type="chain",
+            project_name=settings.langsmith_project,
+            inputs={"thread_id": row["thread_id"], "version": row["version"],
+                    "takeoff_line_refs": [o.takeoff_line_ref for o in overrides]},
+            outputs={"overrides": [{"takeoff_line_ref": o.takeoff_line_ref,
+                                    "price_cad": o.price_cad, "note": o.note}
+                                   for o in overrides]},
+            tags=["estimator_price_override", "batch", f"thread={row['thread_id']}"])
+    except Exception:
+        pass
+
+
 @app.get("/healthz")
 def healthz():
     return {"ok": True}
@@ -117,6 +145,67 @@ def login(body: LoginIn):
             or not settings.estimator_demo_user):
         raise HTTPException(401, "invalid username or password")
     return {"ok": True}
+
+
+def _needs_price(row: dict) -> bool:
+    """A price_resolution row the pipeline couldn't usably price -- either
+    explicitly "unpriced", or a Tavily fallback that returned narrative
+    text with no parseable number (seen live on quote #24: "Cabinetry --
+    material/supply" came back price_source "tavily" with an "answer"
+    string but no extended_quoted_cad, and the drafting LLM correctly
+    wrote "estimator to price" for it -- the structured data just didn't
+    say so)."""
+    if row.get("price_source") == "unpriced":
+        return True
+    return (row.get("price_source") == "tavily"
+            and row.get("extended_quoted_cad") is None)
+
+
+def _find_priceable_row(price_resolution: list[dict], ref: str) -> dict:
+    """The single priceable row for `ref`, or raises the matching
+    HTTPException (404 no such line, 409 already priced, 409 ambiguous --
+    a takeoff line can produce several price_resolution rows sharing one
+    ref, and in rare cases more than one can independently need a price)."""
+    matches = [r for r in price_resolution if r.get("takeoff_line_ref") == ref]
+    if not matches:
+        raise HTTPException(404, f"no such takeoff line in this quote: {ref}")
+    eligible = [r for r in matches if _needs_price(r)]
+    if len(eligible) > 1:
+        raise HTTPException(409, f"ambiguous line {ref}: {len(eligible)} "
+                                  "rows need a price, cannot determine which")
+    if not eligible:
+        raise HTTPException(409, f"line already priced: {ref}")
+    return eligible[0]
+
+
+def _apply_price_override(row: dict, price_cad: float, note: str | None) -> dict:
+    qty = row.get("quantity") or 0
+    return {**row, "price_source": "estimator_override",
+            "unit_price_quoted_cad": round(price_cad / qty, 2) if qty else None,
+            "extended_quoted_cad": price_cad,
+            "source_detail": "estimator-provided price", "note": note}
+
+
+def _load_active_quote_state(quote_id: int) -> tuple[dict, dict]:
+    """Shared prelude for the two price-override routes: the quote row
+    (404/409-gated) plus its live checkpointed AgentState (409 if the
+    checkpointer no longer has it)."""
+    store = deps.get_store()
+    row = store.get(quote_id)
+    if row is None:
+        raise HTTPException(404, "quote not found")
+    if row["status"] not in ACTIVE_STATUSES:
+        raise HTTPException(409, f"quote is {row['status']}, not editable")
+
+    snapshot = deps.get_graph().get_state(
+        {"configurable": {"thread_id": row["thread_id"]}})
+    state = dict(snapshot.values) if snapshot and snapshot.values else {}
+    if not state:
+        raise HTTPException(
+            409, "conversation state no longer available for this quote "
+                 "(checkpointer may have evicted it) -- use /edit or /revise "
+                 "instead")
+    return row, state
 
 
 def _stage_outputs(state: dict) -> dict | None:
@@ -285,54 +374,18 @@ def revise_quote(quote_id: int, body: ReviseIn):
 
 @app.post("/quotes/{quote_id}/lines/{takeoff_line_ref}/price")
 def override_line_price(quote_id: int, takeoff_line_ref: str, body: PriceOverrideIn):
-    """Estimator prices a single line the pipeline couldn't price (capstone
-    scope: only lines still marked price_source "unpriced" are eligible).
+    """Estimator prices a single line the pipeline couldn't usably price.
     Unlike /revise, this does NOT re-run codes/takeoff/price_fill -- those
     would just rebuild price_resolution from scratch and erase the override.
     Instead it patches the one row in the live checkpointed state and
     re-invokes draft_node directly, so only the drafting LLM call is spent."""
     store = deps.get_store()
-    row = store.get(quote_id)
-    if row is None:
-        raise HTTPException(404, "quote not found")
-    if row["status"] not in ACTIVE_STATUSES:
-        raise HTTPException(409, f"quote is {row['status']}, not editable")
-
-    snapshot = deps.get_graph().get_state(
-        {"configurable": {"thread_id": row["thread_id"]}})
-    state = dict(snapshot.values) if snapshot and snapshot.values else {}
-    if not state:
-        raise HTTPException(
-            409, "conversation state no longer available for this quote "
-                 "(checkpointer may have evicted it) -- use /edit or /revise "
-                 "instead")
-
+    row, state = _load_active_quote_state(quote_id)
     price_resolution = state.get("price_resolution") or []
-    matches = [r for r in price_resolution
-              if r.get("takeoff_line_ref") == takeoff_line_ref]
-    if not matches:
-        raise HTTPException(404, "no such takeoff line in this quote")
-    unpriced = [r for r in matches if r.get("price_source") == "unpriced"]
-    if len(unpriced) > 1:
-        raise HTTPException(
-            409, f"ambiguous line: {len(unpriced)} unpriced rows share this "
-                 "reference, cannot determine which to price")
-    if len(unpriced) == 0:
-        raise HTTPException(
-            409, "line is already priced; overriding a priced line isn't "
-                 "supported yet")
-    target = unpriced[0]
+    target = _find_priceable_row(price_resolution, takeoff_line_ref)
     price_source_before = target.get("price_source", "unpriced")
 
-    qty = target.get("quantity") or 0
-    override_row = {
-        **target,
-        "price_source": "estimator_override",
-        "unit_price_quoted_cad": round(body.price_cad / qty, 2) if qty else None,
-        "extended_quoted_cad": body.price_cad,
-        "source_detail": "estimator-provided price",
-        "note": body.note,
-    }
+    override_row = _apply_price_override(target, body.price_cad, body.note)
     updated_resolution = [
         override_row if r is target else r for r in price_resolution]
 
@@ -355,4 +408,53 @@ def override_line_price(quote_id: int, takeoff_line_ref: str, body: PriceOverrid
         source_quote_id=quote_id, result_quote_id=new_row["id"])
     _log_price_override_to_langsmith(row, takeoff_line_ref, body.price_cad,
                                      body.note)
+    return new_row
+
+
+@app.post("/quotes/{quote_id}/lines/price")
+def override_line_prices(quote_id: int, body: PriceOverridesIn):
+    """Batch form of override_line_price: prices N lines in one call,
+    producing exactly one new draft version instead of N. All-or-nothing --
+    if any submitted line is invalid (not found, already priced, or
+    ambiguous), the whole request is rejected and no version is created."""
+    store = deps.get_store()
+    row, state = _load_active_quote_state(quote_id)
+    price_resolution = state.get("price_resolution") or []
+
+    refs = [item.takeoff_line_ref for item in body.overrides]
+    if len(refs) != len(set(refs)):
+        raise HTTPException(400, "duplicate takeoff_line_ref in one request")
+
+    # Validate every item up front -- nothing is applied until all pass, so
+    # this is naturally all-or-nothing.
+    targets = [(item, _find_priceable_row(price_resolution, item.takeoff_line_ref))
+               for item in body.overrides]
+
+    updated_resolution = list(price_resolution)
+    price_sources_before = {}
+    for item, target in targets:
+        price_sources_before[item.takeoff_line_ref] = target.get("price_source", "unpriced")
+        override_row = _apply_price_override(target, item.price_cad, item.note)
+        updated_resolution = [
+            override_row if r is target else r for r in updated_resolution]
+
+    result = draft_node({**state, "price_resolution": updated_resolution})
+    if not result.get("draft"):
+        raise HTTPException(502, "draft regeneration produced no draft")
+
+    new_row = store.create_draft(
+        row["thread_id"], result["draft"], result.get("routing_packet"),
+        stage_outputs={"codes_checklist": state.get("codes_checklist"),
+                       "takeoff": state.get("takeoff"),
+                       "price_resolution": updated_resolution},
+        contact_email=row.get("contact_email"),
+        contact_phone=row.get("contact_phone"),
+        property_key=row.get("property_key"))
+    for item, _target in targets:
+        store.record_price_override(
+            thread_id=row["thread_id"], takeoff_line_ref=item.takeoff_line_ref,
+            price_cad=item.price_cad, note=item.note,
+            price_source_before=price_sources_before[item.takeoff_line_ref],
+            source_quote_id=quote_id, result_quote_id=new_row["id"])
+    _log_price_overrides_batch_to_langsmith(row, body.overrides)
     return new_row
