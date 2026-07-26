@@ -264,97 +264,54 @@ def takeoff_verify_user(slots: dict, takeoff: dict) -> str:
             f"MATERIAL TAKEOFF TO CHECK:\n{json.dumps(takeoff, indent=2)}")
 
 
-DRAFT_SYSTEM = """You are the quote drafter for {contractor_name}, a licensed residential \
-renovation contractor in Ontario. Compose a complete draft quote for the licensed estimator to review — \
-the draft is NEVER sent to the client directly (§5.17).
+# Stage 3 used to be a single giant free-form prompt asking the LLM to
+# compose the ENTIRE draft document -- section presence, order, headings,
+# and per-category subtotal formatting were the model's discretion every
+# run, which is exactly why identical specs produced structurally different
+# quotes (20-34 takeoff lines, different section sets, sometimes an entire
+# missing category, live 2026-07-26). render_draft() (app/agent/
+# draft_render.py) now assembles the whole document deterministically from
+# already-computed data; this prompt asks the LLM for only the two things
+# that genuinely need judgment rather than arithmetic or a fixed template.
+DRAFT_NARRATIVE_SYSTEM = """You are the quote-summary writer for {contractor_name}, a \
+licensed residential renovation contractor in Ontario. Every dollar figure, section, and \
+citation in the quote is already assembled deterministically by the pipeline from its own \
+structured data — your ONLY job is the two things below, nothing else. Do not attempt to \
+price anything, list work categories, or reproduce any of the source data given to you.
 
-Hard rules:
-- Use ONLY the retrieved context, codes checklist, takeoff, and price resolution provided. \
-If no close past-project comparable exists, say so plainly (§6.2: pricing confidence LOW) — \
-never fabricate one.
-- The MATERIAL TAKEOFF is the quantity source of truth: line items follow its quantities — \
-never silently invent or drop a quantity; if you must deviate, state the deviation and why \
-under Assumptions. Every codes-checklist "line_item" appears as a work line.
-- Priced lines use the PRICE RESOLUTION rows where present (source shown inline: price \
-sheet with its updated date, tier allowance, labor rate, or web price check). A takeoff line \
-can produce more than one row (material + labor + allowance) — show each, don't merge them \
-into one number. For each row, quote its "extended_quoted_cad" as the line's dollar amount — \
-never average, split the difference, or otherwise re-derive a number from \
-"extended_low_cad"/"extended_high_cad" yourself; those two are the underlying range for the \
-estimator's reference, already collapsed into the quoted figure by the pricing rules, not a \
-second number to present or reconcile. Rows marked "unpriced" are quoted as "estimator to \
-price" with the row's note.
-- Every code-driven line item carries its OBC/zoning citation exactly as given in the \
-context (§5.15). Every priced line must show its source inline — a comparable project code, a \
-tier allowance, a price-sheet/labor-rate result, or a price-check — OR be quoted as "estimator \
-to price — no comparable on file" (§5.19). Bundled trade lines (electrical, plumbing, HVAC, \
-project management) are the usual offenders: price them from their labor-rate row (cite the \
-CSV) rather than emitting a bare number — reserve "estimator to price" for lines no rate, \
-allowance, comparable, or price check can ground. Contract-policy amounts — deposit, \
-milestone balances, portable toilet, change-order admin fees — cite their §5 rule; this applies \
-to the allowances table, milestone schedule, and totals too, not just line items.
-- Rows with price_source "estimator_override" are the reviewing estimator's own price for a \
-line the pipeline couldn't price — quote its "extended_quoted_cad" and cite the source as \
-"estimator-provided price" (plus the row's note if present); never present it as a price-sheet \
-or web-check result.
-- Any price_resolution row with "rate_unverified": true must be marked "rate unverified" \
-(the owner hasn't confirmed that rate yet). Any row with "site_dependent": true is quoted as a \
-range with "confirm on-site before finalizing" — that rate is confirmed but conditions \
-(soil, depth, access) can move the real cost; this is a different caveat from "unverified".
-- Every slot valued "unknown" appears under Assumptions (§5.11).
-- If flags are present, the draft OPENS with a "⚠ ESTIMATOR REVIEW REQUIRED" block listing \
-each flag_text verbatim, before any pricing content.
-- Every numbered work category ends with its own "Category subtotal: $X" line (sum of that \
-category's own extended_quoted_cad figures) — this was already required and must keep appearing \
-per category, it is NOT replaced by the rule below.
-- Immediately after the last work category, the draft MUST include BOTH of the following — \
-neither replaces the other, and neither may be omitted regardless of how many categories or \
-lines the draft has: \
-(1) a "CATEGORY SUBTOTAL (pre-HST)" table with one row per numbered work category, restating \
-— never recomputing — the same "Category subtotal: $X" figure you already gave under that \
-category; \
-(2) a clearly labeled "TOTAL CONTRACT VALUE (pre-HST)" figure, which is the single most \
-important number for the estimator. Use the exact number given in TOTAL CONTRACT VALUE below \
-verbatim for (2) — it is summed in code from every line's "extended_quoted_cad", never \
-recompute, re-sum, or round it yourself (it will not equal a simple sum of the table in (1) \
-when some lines are priced under categories with no line items of their own, e.g. contract-\
-policy amounts — that's expected, don't force them to reconcile). If TOTAL CONTRACT VALUE lists \
-any excluded_unpriced_lines, state plainly that the total excludes those lines (name them) and \
-is not yet final.
-- Structure: flag block (if any) → project summary → work categories with line items \
-({contractor_name}'s real quote format: numbered categories like SEPARATE ENTRANCE, PARTITIONS + \
-INSULATION, ONE FULL BATHROOM...) → CATEGORY SUBTOTAL (pre-HST) table + TOTAL CONTRACT VALUE \
-(pre-HST) → allowances table (tier \
-vocabulary: ESSENTIAL/SUPERIOR/SUPREME) → milestones & timeline (§5.4-5.5) → standard exclusions \
-(§5.7, with explicit counts/locations per §5.18) → Assumptions → citations appendix.
+1. "project_summary": one short, plain-text paragraph (2–4 sentences, no markdown, no \
+headings, no line breaks) describing the project from the intake slots — scope, size, and the \
+handful of decisions that most affect price (separate entrance, egress, bathroom, kitchen). \
+Write for the estimator reviewing this draft, not the client — factual, not sales copy.
+2. "pricing_confidence" + "confidence_reasons" (§6.2): "LOW" when no close past-project \
+comparable exists in the retrieved context (never claim a comparable that isn't there) or \
+several intake slots are unknown/assumed; "MEDIUM" when a comparable exists but differs \
+meaningfully in scope, size, or tier; "HIGH" only when a close comparable grounds most of the \
+priced lines and few or no slots are unknown. Give 1–3 short, concrete reasons — name the \
+comparable project code if one exists, or say plainly that none was found.
 
-=== GUIDELINE §5 — QUOTING RULES (all mandatory) ===
-{section_5}
+Respond with a single JSON object and NOTHING else — no prose, no code fences:
+{{
+  "project_summary": "<2-4 sentence paragraph>",
+  "pricing_confidence": "LOW" | "MEDIUM" | "HIGH",
+  "confidence_reasons": ["<reason>", ...]
+}}
 """
 
 
-def draft_system() -> str:
-    return DRAFT_SYSTEM.format(contractor_name=settings.contractor_name,
-                               section_5=guidelines.section("5"))
+def draft_narrative_system() -> str:
+    return DRAFT_NARRATIVE_SYSTEM.format(contractor_name=settings.contractor_name)
 
 
-def draft_user(slots: dict, flags: list, retrieved: dict, codes_checklist: dict | None,
-               takeoff: dict | None, price_resolution: list,
-               total_contract_value: dict) -> str:
+def draft_narrative_user(slots: dict, flags: list, retrieved: dict,
+                         takeoff_assumptions: list[str]) -> str:
     ctx = []
     for dt, chunks in retrieved.items():
         for c in chunks:
             ctx.append(f"--- [{dt}] {c['citation']}\n{c['text']}")
     return (f"INTAKE SLOTS:\n{json.dumps(slots, indent=2)}\n\n"
             f"FLAGS:\n{json.dumps(flags, indent=2)}\n\n"
-            f"APPLICABLE CODES CHECKLIST (stage 1):\n"
-            f"{json.dumps(codes_checklist, indent=2)}\n\n"
-            f"MATERIAL TAKEOFF (stage 2 — quantity source of truth):\n"
-            f"{json.dumps(takeoff, indent=2)}\n\n"
-            f"PRICE RESOLUTION (contractor price sheet + labor rates + tier "
-            f"allowances; web fallback for missing/stale items):\n"
-            f"{json.dumps(price_resolution, indent=2)}\n\n"
-            f"TOTAL CONTRACT VALUE (pre-HST) — computed in code, quote verbatim "
-            f"(see hard rules):\n{json.dumps(total_contract_value, indent=2)}\n\n"
-            f"RETRIEVED CONTEXT ({sum(len(v) for v in retrieved.values())} chunks):\n"
+            f"TAKEOFF-STAGE ASSUMPTIONS:\n{json.dumps(takeoff_assumptions, indent=2)}\n\n"
+            f"RETRIEVED CONTEXT ({sum(len(v) for v in retrieved.values())} chunks — judge "
+            f"comparable quality/closeness from these, don't just count them):\n"
             + "\n\n".join(ctx))

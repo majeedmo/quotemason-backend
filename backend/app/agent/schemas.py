@@ -78,3 +78,16 @@ class Takeoff(BaseModel):
     gfa_sqft: float | None = None
     lines: list[TakeoffLine]
     assumptions: list[str] = []
+
+
+class DraftNarrative(BaseModel):
+    """Stage 3's entire LLM contribution to the draft, once render_draft()
+    (app/agent/draft_render.py) assembles everything else deterministically
+    from already-computed data. project_summary and pricing_confidence are
+    the only two things in the whole document that genuinely need judgment
+    (§6.2's pricing-confidence policy) rather than arithmetic or a fixed
+    template -- structured output here keeps that judgment call from
+    reintroducing markdown-formatting variance into the rest of the draft."""
+    project_summary: str                 # one short paragraph, plain text (no markdown)
+    pricing_confidence: Literal["LOW", "MEDIUM", "HIGH"]
+    confidence_reasons: list[str]        # e.g. "no close past-project comparable found"
