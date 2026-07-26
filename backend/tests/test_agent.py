@@ -8,7 +8,7 @@ import pytest
 from langchain_core.messages import HumanMessage
 
 import app.agent.nodes as nodes
-from app.agent import guidelines
+from app.agent import guidelines, schemas
 from app.agent.nodes import (codes_node, intake_node, price_fill_node,
                              takeoff_node)
 from app.agent.state import AgentState
@@ -19,6 +19,16 @@ from app.agent.state import AgentState
 def test_sections_load():
     assert "Package tier preference" in guidelines.section("3")
     assert "HARD ROUTE" in guidelines.section("6")
+
+
+def test_section_4_gates_demolition_and_requires_baseline_trades():
+    """Locks in the 2026-07-26 guideline addition that fixes two live bugs:
+    demolition hallucinated with no supporting intake detail (3 of 4
+    identical-spec quotes), and HVAC/plumbing dropped entirely (the prompt
+    side of the fix -- _enforce_baseline_trades is the code-side backstop)."""
+    section_4 = guidelines.section("4")
+    assert "nothing to demolish" in section_4
+    assert "never omitted entirely" in section_4
 
 
 def test_hard_route_keywords_from_doc():
@@ -816,6 +826,77 @@ def test_codes_node_assigns_sequential_ids_never_from_model(monkeypatch):
     assert ids == ["c1", "c2"]
 
 
+def test_drop_non_line_item_code_refs_removes_verify_on_site_lines():
+    """Live bug: the takeoff model inconsistently creates a takeoff line for
+    a "verify_on_site" checklist item (nothing to price), which then falls
+    into the generic "unpriced -- estimator to price" bucket and surfaces in
+    the estimator's "needs a price" queue asking for a dollar figure on a
+    pure attention check."""
+    from app.agent.nodes import _drop_non_line_item_code_refs
+    takeoff = schemas.Takeoff(lines=[
+        schemas.TakeoffLine(id="t1", category="code_required", quantity=0,
+                            unit="lump_sum", code_item_ref="c1"),
+        schemas.TakeoffLine(id="t2", category="plumbing", trade="plumbing_rough_and_finish",
+                            quantity=1, unit="lump_sum", code_item_ref="c2"),
+        schemas.TakeoffLine(id="t3", category="flooring", item="lvp", quantity=100, unit="sqft"),
+    ])
+    checklist = schemas.CodesChecklist(items=[
+        schemas.CodeItem(id="c1", requirement="verify ceiling height", citation="OBC 9.5.3.1",
+                         doc_type="building_code", action="verify_on_site"),
+        schemas.CodeItem(id="c2", requirement="floor drain", citation="OBC 9.31.4.3",
+                         doc_type="building_code", action="line_item"),
+    ])
+    _drop_non_line_item_code_refs(takeoff, checklist)
+    ids = {ln.id for ln in takeoff.lines}
+    assert ids == {"t2", "t3"}  # t1 (verify_on_site) dropped; others kept
+
+
+def test_enforce_baseline_trades_injects_missing_hvac_and_plumbing():
+    """Live bug: 2 of 4 identical-spec quotes dropped HVAC and/or plumbing
+    entirely (0 takeoff lines) -- neither has an intake slot for the
+    omission verifier to check against, so this must be enforced in code."""
+    from app.agent.nodes import _enforce_baseline_trades
+    takeoff = schemas.Takeoff(lines=[
+        schemas.TakeoffLine(id="t1", category="flooring", item="lvp", quantity=100, unit="sqft"),
+    ])
+    _enforce_baseline_trades(takeoff)
+    trades = {ln.trade for ln in takeoff.lines if ln.trade}
+    assert trades == {"plumbing_rough_and_finish", "hvac_rough_and_finish"}
+
+
+def test_enforce_baseline_trades_does_not_duplicate_existing_trade():
+    from app.agent.nodes import _enforce_baseline_trades
+    takeoff = schemas.Takeoff(lines=[
+        schemas.TakeoffLine(id="t1", category="plumbing", trade="plumbing_rough_and_finish",
+                            quantity=1, unit="lump_sum"),
+    ])
+    _enforce_baseline_trades(takeoff)
+    plumbing_lines = [ln for ln in takeoff.lines if ln.trade == "plumbing_rough_and_finish"]
+    assert len(plumbing_lines) == 1
+    hvac_lines = [ln for ln in takeoff.lines if ln.trade == "hvac_rough_and_finish"]
+    assert len(hvac_lines) == 1
+
+
+def test_takeoff_node_injected_baseline_trades_price_normally(monkeypatch):
+    """The injected baseline lines must flow through price_fill_node's
+    normal labor-rate lookup, not end up "unpriced" -- they're real,
+    priceable scope, just enforced deterministically instead of trusting
+    the takeoff to include them."""
+    _patch_stage_retrievers(monkeypatch)
+    takeoff_json = json.dumps({"gfa_sqft": 900, "lines": [
+        {"category": "flooring", "item": "lvp", "quantity": 100, "unit": "sqft"}],
+        "assumptions": []})
+    model = _FakeStageModel(SimpleNamespace(content=takeoff_json))
+    monkeypatch.setattr(nodes, "takeoff_model", lambda: model)
+    out = takeoff_node({"slots": {"scope": "finished basement"}})
+    monkeypatch.setattr(nodes.settings, "tavily_api_key", "")
+    priced = price_fill_node({"takeoff": out["takeoff"]})["price_resolution"]
+    hvac_rows = [r for r in priced if r.get("trade") == "hvac_rough_and_finish"]
+    plumbing_rows = [r for r in priced if r.get("trade") == "plumbing_rough_and_finish"]
+    assert hvac_rows and hvac_rows[0]["price_source"] == "labor_rate"
+    assert plumbing_rows and plumbing_rows[0]["price_source"] == "labor_rate"
+
+
 def test_takeoff_node_injects_synthetic_line_for_uncovered_mandatory_code_item(monkeypatch):
     _patch_stage_retrievers(monkeypatch)
     # the model's takeoff omits any line referencing the mandatory code item
@@ -828,9 +909,8 @@ def test_takeoff_node_injects_synthetic_line_for_uncovered_mandatory_code_item(m
     out = takeoff_node({"slots": {"scope": "finished basement"},
                         "codes_checklist": checklist})
     lines = out["takeoff"]["lines"]
-    assert len(lines) == 1
-    injected = lines[0]
-    assert injected["code_item_ref"] == "c1" and injected["source"] == "code_item"
+    injected = next(ln for ln in lines if ln.get("code_item_ref") == "c1")
+    assert injected["source"] == "code_item"
     assert "egress window" in injected["description"]
 
 
@@ -847,8 +927,11 @@ def test_takeoff_node_no_injection_when_code_item_covered(monkeypatch):
                             "action": "line_item"}]}
     out = takeoff_node({"slots": {"scope": "finished basement"},
                         "codes_checklist": checklist})
-    assert len(out["takeoff"]["lines"]) == 1  # nothing injected — already covered
-    assert out["takeoff"]["lines"][0]["id"] == "t1"  # ids assigned in code
+    lines = out["takeoff"]["lines"]
+    # nothing injected for the code item -- already covered by the model's
+    # own line (baseline plumbing/hvac lines are unrelated and still added)
+    assert sum(1 for ln in lines if ln.get("code_item_ref") == "c1") == 1
+    assert lines[0]["id"] == "t1"  # ids assigned in code
 
 
 # --- takeoff verifier: catches new-construction-vs-existing-scope and ------
