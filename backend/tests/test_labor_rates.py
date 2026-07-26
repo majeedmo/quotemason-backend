@@ -75,9 +75,14 @@ def test_repo_sheet_loads_and_status_values_are_known():
         # the two site-dependent rows flagged during review are wired through
         assert labor.is_site_dependent(sheet[("excavation_below_grade_entrance", "any")])
         assert labor.is_site_dependent(sheet[("window_well_install", "any")])
-        # a normal row is plain VERIFIED, not unverified or site-dependent
+        # A normal row is rate-unverified, not site-dependent: every rate in
+        # the sheet was calibrated by fitting a flat 50% cut to 6 eval cases
+        # (see the CSV's own notes column), not confirmed by the owner --
+        # PLACEHOLDER_OWNER_VERIFY is the honest status (was wrongly VERIFIED
+        # until 2026-07-26, which suppressed the "rate unverified" disclosure
+        # on every labor-priced line in every quote).
         normal = sheet[("framing", "small_lt_500sqft")]
-        assert not labor.is_rate_unverified(normal)
+        assert labor.is_rate_unverified(normal)
         assert not labor.is_site_dependent(normal)
     finally:
         labor._sheet.cache_clear()
