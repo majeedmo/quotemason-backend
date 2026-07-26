@@ -105,9 +105,11 @@ def _na_reason(section_number: int, slots: dict) -> str:
             return ("not applicable: separate entrance and egress already exist, "
                     "no new construction, per intake")
     if section_number == 14:
-        cold = str(slots.get("cold_room", "")).strip().lower()
+        cold_raw = slots.get("cold_room")
+        cold = str(cold_raw or "").strip().lower()
         if cold in ("", "none", "no", "n/a"):
-            return f"not applicable: no cold room in scope (intake: cold_room = {slots.get('cold_room')!r})"
+            shown = cold_raw if isinstance(cold_raw, str) and cold_raw.strip() else "not specified"
+            return f"not applicable: no cold room in scope (intake: cold_room = {shown!r})"
         return "estimator to price — no cold-storage material/labor rate on file for this scope"
     if section_number == 2:
         return ("excluded from contract price per §5.7 (permits & city fees), unless "
@@ -124,6 +126,19 @@ def _render_cost_section(number: int, heading: str, rows: list[dict],
     instances: dict[str, list[dict]] = {}
     for r in rows:
         instances.setdefault(r.get("instance") or "", []).append(r)
+    if "" in instances and len(instances) == 2:
+        # An unlabeled row (e.g. the takeoff verifier's injected omission
+        # placeholder, which has no instance of its own since it isn't tied
+        # to any real takeoff line) joins the section's one real instance
+        # rather than splitting into its own "no instance" heading for what
+        # is physically the same bathroom/kitchen -- confirmed live
+        # 2026-07-26: a single-bathroom project's omission placeholder for
+        # "bathroom_rough_in" rendered as a bare "## 7. Bathroom(s)" block
+        # alongside "## 7. Bathroom(s) — Bathroom 1" for the priced lines.
+        # Ambiguous with 2+ real instances, so this only merges when there's
+        # exactly one to attribute it to.
+        [other] = [k for k in instances if k != ""]
+        instances[other] = instances[other] + instances.pop("")
     blocks = []
     total = 0.0
     for instance in sorted(instances):
