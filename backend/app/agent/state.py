@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import operator
 from typing import Annotated, Any, TypedDict
 
 from langgraph.graph.message import add_messages
@@ -22,6 +23,11 @@ class AgentState(TypedDict, total=False):
     price_resolution: list[dict]   # code-built priced rows (between stages 2-3)
     takeoff_issues: list[dict]     # [{line_id, reason}] from verify_takeoff_node
     takeoff_verify_attempts: int   # retry counter; reset to 0 by codes_node
+    generation_stats: Annotated[list[dict], operator.add]  # per-LLM-call usage;
+                                    # accumulates across the whole checkpointed
+                                    # thread (every turn, every version) the same
+                                    # way `messages` does -- nodes return only
+                                    # their own new entries
     draft: str | None
     routing_packet: dict | None    # §6.3 estimator hand-off
     estimator_feedback: str | None  # set on a /revise invoke; cleared by draft

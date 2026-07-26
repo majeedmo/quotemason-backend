@@ -618,6 +618,87 @@ def test_total_contract_value_empty_price_resolution():
         "total_contract_value_cad": 0, "excluded_unpriced_lines": []}
 
 
+# --- generation time/cost tracking: real per-call usage, computed in code ---
+
+def test_usage_entry_reads_real_response_fields():
+    """Mirrors the actual shape confirmed live off a real OpenRouter/
+    langchain_openai response: usage_metadata for tokens, response_metadata
+    .token_usage.cost for OpenRouter's own billed cost."""
+    from app.agent.nodes import _usage_entry
+    resp = SimpleNamespace(
+        usage_metadata={"input_tokens": 14, "output_tokens": 4, "total_tokens": 18},
+        response_metadata={"model_name": "anthropic/claude-haiku-4.5",
+                           "token_usage": {"cost": 3.4e-05}})
+    assert _usage_entry("codes", resp) == {
+        "stage": "codes", "model": "anthropic/claude-haiku-4.5",
+        "input_tokens": 14, "output_tokens": 4, "cost_usd": 3.4e-05}
+
+
+def test_usage_entry_degrades_for_bare_test_double():
+    """A plain SimpleNamespace(content=...) fake (used throughout this test
+    file) has neither attribute -- must degrade to zeros/None, never crash."""
+    from app.agent.nodes import _usage_entry
+    resp = SimpleNamespace(content="hello")
+    assert _usage_entry("draft", resp) == {
+        "stage": "draft", "model": "", "input_tokens": 0,
+        "output_tokens": 0, "cost_usd": None}
+
+
+def test_generation_summary_sums_and_flags_incomplete_cost():
+    from app.agent.nodes import _generation_summary
+    stats = [
+        {"stage": "codes", "input_tokens": 100, "output_tokens": 20, "cost_usd": 0.001},
+        {"stage": "draft", "input_tokens": 4000, "output_tokens": 1500, "cost_usd": 0.02},
+        {"stage": "takeoff", "input_tokens": 200, "output_tokens": 50, "cost_usd": None},
+    ]
+    out = _generation_summary(stats)
+    assert out["total_cost_usd"] == pytest.approx(0.021)
+    assert out["cost_is_complete"] is False  # one entry had no cost data
+    assert out["total_input_tokens"] == 4300
+    assert out["total_output_tokens"] == 1570
+    assert out["llm_calls"] == 3
+
+
+def test_generation_summary_empty_list():
+    from app.agent.nodes import _generation_summary
+    assert _generation_summary([]) == {
+        "total_cost_usd": 0, "cost_is_complete": True,
+        "total_input_tokens": 0, "total_output_tokens": 0, "llm_calls": 0}
+
+
+def test_graph_accumulates_generation_stats_across_stages(monkeypatch):
+    """generation_stats is Annotated[list, operator.add] -- LangGraph must
+    concatenate every node's own entries into one running list across the
+    whole pipeline (codes -> takeoff -> verify -> draft), the same way
+    `messages` already accumulates."""
+    from langgraph.checkpoint.memory import InMemorySaver
+    from app.agent.graph import build_graph
+
+    def _resp(stage, content):
+        return SimpleNamespace(content=content,
+                               usage_metadata={"input_tokens": 100, "output_tokens": 10},
+                               response_metadata={"model_name": f"fake-{stage}",
+                                                  "token_usage": {"cost": 0.001}})
+
+    _patch_stage_retrievers(monkeypatch)
+    monkeypatch.setattr(nodes.settings, "tavily_api_key", "")
+    monkeypatch.setattr(nodes, "codes_model",
+                        lambda: _FakeStageModel(_resp("codes", _codes_json())))
+    monkeypatch.setattr(nodes, "takeoff_model",
+                        lambda: _FakeStageModel(_resp("takeoff", _GOOD_TAKEOFF)))
+    monkeypatch.setattr(nodes, "takeoff_verifier_model",
+                        lambda: _FakeStageModel(_resp("verify", _CLEAR)))
+    monkeypatch.setattr(nodes, "drafting_model",
+                        lambda: _FakeStageModel(_resp("draft", "# Quote")))
+
+    g = build_graph(checkpointer=InMemorySaver())
+    out = g.invoke({"estimator_feedback": "n/a", "slots": {"scope": "finished basement"}},
+                   {"configurable": {"thread_id": "gen-stats"}})
+    stages = [s["stage"] for s in out["generation_stats"]]
+    assert stages == ["codes", "takeoff", "takeoff_verify", "draft"]
+    assert all(s["cost_usd"] == 0.001 for s in out["generation_stats"])
+
+
 def test_draft_node_passes_computed_total_to_prompt(monkeypatch):
     """The drafting LLM must receive the code-computed total verbatim --
     this is what makes the total reliably present instead of depending on
@@ -706,7 +787,8 @@ def test_verify_takeoff_node_degrades_on_unparseable_output(monkeypatch):
     model = _FakeStageModel(SimpleNamespace(content="not json at all"))
     monkeypatch.setattr(nodes, "takeoff_verifier_model", lambda: model)
     out = verify_takeoff_node({"slots": {}, "takeoff": {"lines": [{"id": "t1"}]}})
-    assert out == {"takeoff_issues": [], "takeoff_verify_attempts": 1}
+    assert out["takeoff_issues"] == [] and out["takeoff_verify_attempts"] == 1
+    assert len(out["generation_stats"]) == 1  # the call still happened, still costs money
 
 
 def test_verify_takeoff_node_skips_llm_when_no_takeoff(monkeypatch):
@@ -716,7 +798,7 @@ def test_verify_takeoff_node_skips_llm_when_no_takeoff(monkeypatch):
         raise AssertionError("must not call the verifier with no takeoff to check")
     monkeypatch.setattr(nodes, "takeoff_verifier_model", _explode)
     out = verify_takeoff_node({"slots": {}, "takeoff": None, "takeoff_verify_attempts": 2})
-    assert out == {"takeoff_issues": [], "takeoff_verify_attempts": 3}
+    assert out == {"takeoff_issues": [], "takeoff_verify_attempts": 3, "generation_stats": []}
 
 
 def test_verify_takeoff_node_parses_omission_issue(monkeypatch):
