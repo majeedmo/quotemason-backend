@@ -113,6 +113,28 @@ def test_omission_placeholder_routes_to_its_real_section_not_misc():
     assert "kitchen" not in draft[misc_idx:misc_idx + 200].lower()
 
 
+def test_omission_placeholder_joins_the_sections_one_real_instance():
+    """Live bug (2026-07-26): a single-bathroom project's verifier-injected
+    omission placeholder has no `instance` of its own (it isn't tied to a
+    real takeoff line), so it rendered as a spurious bare "Bathroom(s)"
+    heading alongside "Bathroom(s) — Bathroom 1" for the priced lines --
+    two headings for one physical bathroom. It must join the section's sole
+    real instance instead."""
+    rows = [
+        {"category": "bathroom", "description": "Toilet", "quantity": 1, "unit": "each",
+         "extended_quoted_cad": 475.0, "price_source": "price_sheet",
+         "source_detail": "x", "instance": "bathroom_1"},
+        {"category": "verifier_flagged", "description": "Possible missing scope: bathroom_rough_in",
+         "quantity": 0, "unit": "lump_sum", "takeoff_line_ref": "omission-bathroom_rough_in",
+         "price_source": "unpriced", "note": "estimator to confirm scope"},
+    ]
+    draft = render_draft(_state(price_resolution=rows), NARRATIVE)
+    assert draft.count("## 7. Bathroom(s)") == 1  # not also a bare, unsuffixed heading
+    idx = draft.index("## 7. Bathroom(s) — Bathroom 1")
+    chunk = draft[idx:idx + 500]
+    assert "Toilet" in chunk and "Possible missing scope" in chunk
+
+
 def test_category_subtotal_table_sums_to_total_contract_value():
     rows = [
         {"category": "flooring", "description": "LVP", "extended_quoted_cad": 5000.0,
