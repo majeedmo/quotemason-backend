@@ -696,7 +696,8 @@ def test_verify_takeoff_node_parses_issues(monkeypatch):
         content='{"issues": [{"line_id": "t1", "reason": "contradicts existing egress slot"}]}'))
     monkeypatch.setattr(nodes, "takeoff_verifier_model", lambda: model)
     out = verify_takeoff_node({"slots": {}, "takeoff": {"lines": [{"id": "t1"}]}})
-    assert out["takeoff_issues"] == [{"line_id": "t1", "reason": "contradicts existing egress slot"}]
+    assert out["takeoff_issues"] == [{"line_id": "t1", "reason": "contradicts existing egress slot",
+                                      "type": "contradiction"}]
     assert out["takeoff_verify_attempts"] == 1
 
 
@@ -716,6 +717,35 @@ def test_verify_takeoff_node_skips_llm_when_no_takeoff(monkeypatch):
     monkeypatch.setattr(nodes, "takeoff_verifier_model", _explode)
     out = verify_takeoff_node({"slots": {}, "takeoff": None, "takeoff_verify_attempts": 2})
     assert out == {"takeoff_issues": [], "takeoff_verify_attempts": 3}
+
+
+def test_verify_takeoff_node_parses_omission_issue(monkeypatch):
+    """A filled slot with no corresponding takeoff line at all -- confirmed
+    live: bathroom_rough_in filled, zero bathroom lines generated, ~$20k of
+    scope silently dropped with nothing flagging it."""
+    from app.agent.nodes import verify_takeoff_node
+    model = _FakeStageModel(SimpleNamespace(
+        content='{"issues": [{"type": "omission", "slot": "bathroom_rough_in", '
+                '"reason": "slot filled but no bathroom line exists"}]}'))
+    monkeypatch.setattr(nodes, "takeoff_verifier_model", lambda: model)
+    out = verify_takeoff_node({"slots": {"bathroom_rough_in": "existing rough-in"},
+                               "takeoff": {"lines": [{"id": "t1"}]}})
+    assert out["takeoff_issues"] == [{"type": "omission", "slot": "bathroom_rough_in",
+                                      "reason": "slot filled but no bathroom line exists"}]
+
+
+def test_verify_takeoff_node_drops_malformed_typed_issues(monkeypatch):
+    """An "omission" with no slot, or a "contradiction" with no line_id, has
+    nothing to act on downstream -- drop it rather than let it silently
+    become a no-op flag or crash the price_fill lookup."""
+    from app.agent.nodes import verify_takeoff_node
+    model = _FakeStageModel(SimpleNamespace(
+        content='{"issues": ['
+                '{"type": "omission", "reason": "no slot given"}, '
+                '{"type": "contradiction", "reason": "no line_id given"}]}'))
+    monkeypatch.setattr(nodes, "takeoff_verifier_model", lambda: model)
+    out = verify_takeoff_node({"slots": {}, "takeoff": {"lines": [{"id": "t1"}]}})
+    assert out["takeoff_issues"] == []
 
 
 _BAD_TAKEOFF = json.dumps({"gfa_sqft": 900, "lines": [
@@ -790,6 +820,48 @@ def test_graph_takeoff_retry_exhausted_neutralizes_flagged_line(monkeypatch):
     assert row["price_source"] == "unpriced"
     assert row["extended_quoted_cad"] is None
     assert "verifier flagged" in row["note"]
+
+
+def test_price_fill_injects_placeholder_for_unresolved_omission(monkeypatch):
+    """No line exists for an omission issue -- there's nothing to neutralize
+    by ref, so a new synthetic unpriced row must be injected instead (same
+    precedent as _enforce_code_coverage's injected line for a dropped
+    mandatory code item)."""
+    monkeypatch.setattr(nodes.settings, "tavily_api_key", "")
+    out = price_fill_node({
+        "takeoff": {"lines": [{"id": "t1", "category": "flooring", "item": "lvp",
+                              "quantity": 100, "unit": "sqft"}]},
+        "takeoff_issues": [{"type": "omission", "slot": "bathroom_rough_in",
+                           "reason": "slot filled but no bathroom line exists"}]})
+    rows = out["price_resolution"]
+    assert len(rows) == 2  # the real t1 row, untouched, plus the injected one
+    assert rows[0]["takeoff_line_ref"] == "t1" and rows[0]["price_source"] == "price_sheet"
+    placeholder = rows[1]
+    assert placeholder["price_source"] == "unpriced"
+    assert placeholder["takeoff_line_ref"] == "omission-bathroom_rough_in"
+    assert "bathroom_rough_in" in placeholder["description"]
+    assert "no bathroom line exists" in placeholder["note"]
+
+
+def test_graph_takeoff_omission_neutralization(monkeypatch):
+    """Full pipeline: an omission issue survives to price_fill and produces
+    an injected placeholder line, without disturbing the real priced lines."""
+    from langgraph.checkpoint.memory import InMemorySaver
+    from app.agent.graph import build_graph
+    omission_issue = ('{"issues": [{"type": "omission", "slot": "bathroom_rough_in", '
+                      '"reason": "slot filled but no bathroom line exists"}]}')
+    _mock_pipeline_models(monkeypatch,
+                         takeoff_responses=[_GOOD_TAKEOFF, _GOOD_TAKEOFF],
+                         verify_responses=[omission_issue, omission_issue])
+    g = build_graph(checkpointer=InMemorySaver())
+    out = g.invoke({"estimator_feedback": "n/a",
+                    "slots": {"scope": "finished basement", "bathroom_rough_in": "existing rough-in"}},
+                   {"configurable": {"thread_id": "omission"}})
+    rows = out["price_resolution"]
+    assert any(r.get("takeoff_line_ref") == "omission-bathroom_rough_in"
+              and r["price_source"] == "unpriced" for r in rows)
+    real_row = next(r for r in rows if r.get("takeoff_line_ref") == "t1")
+    assert real_row["price_source"] == "price_sheet"  # untouched by the omission handling
 
 
 # --- graph wiring ------------------------------------------------------------

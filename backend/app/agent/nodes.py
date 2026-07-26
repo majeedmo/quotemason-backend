@@ -317,15 +317,35 @@ def takeoff_node(state: AgentState) -> dict:
                           "past_project_quote": comparables}}
 
 
+def _normalize_verify_issue(i: dict) -> dict | None:
+    """Validate + backward-compatibly type one verifier issue. "contradiction"
+    needs a line_id (an existing row to act on); "omission" needs a slot key
+    (there's no line -- that's the whole point). Untyped issues from before
+    the omission check existed default to "contradiction" when they carry a
+    line_id, so old callers/tests still normalize correctly."""
+    if not isinstance(i, dict):
+        return None
+    itype = i.get("type")
+    if itype not in ("contradiction", "omission"):
+        itype = "omission" if i.get("slot") and not i.get("line_id") else "contradiction"
+    if itype == "omission":
+        return {**i, "type": "omission"} if i.get("slot") else None
+    return {**i, "type": "contradiction"} if i.get("line_id") else None
+
+
 def verify_takeoff_node(state: AgentState) -> dict:
     """Second, cheap LLM pass: cross-checks the takeoff against intake slots
-    and against itself for two specific failure classes -- a line implying
-    new construction for scope an intake slot says already exists, or a
-    line contradicting another line in the same takeoff about the same
-    physical item. Confirmed live: both happened in the same real takeoff
-    (egress window marked "no new window needed" on one line, then a new
-    window well priced for it two lines later). Degrades to "no issues" on
-    any parse failure -- a QA-check hiccup must never block the pipeline."""
+    and against itself for three specific failure classes -- a line implying
+    new construction for scope an intake slot says already exists, a line
+    contradicting another line in the same takeoff about the same physical
+    item, or a filled intake slot whose implied scope has no takeoff line at
+    all. Confirmed live on real quotes: the first two happened in the same
+    real takeoff (egress window marked "no new window needed" on one line,
+    then a new window well priced for it two lines later); the third
+    happened separately (a filled bathroom-rough-in slot with zero bathroom
+    lines in the generated takeoff, ~$20k of scope silently dropped).
+    Degrades to "no issues" on any parse failure -- a QA-check hiccup must
+    never block the pipeline."""
     takeoff = state.get("takeoff")
     attempts = state.get("takeoff_verify_attempts", 0) + 1
     issues: list[dict] = []
@@ -337,8 +357,8 @@ def verify_takeoff_node(state: AgentState) -> dict:
             resp = takeoff_verifier_model().invoke(msgs)
             parsed = _parse_json_block(resp.content, required_key="issues")
             if parsed and isinstance(parsed.get("issues"), list):
-                issues = [i for i in parsed["issues"]
-                         if isinstance(i, dict) and i.get("line_id")]
+                issues = [n for i in parsed["issues"]
+                         if (n := _normalize_verify_issue(i)) is not None]
         except Exception:
             logger.exception("takeoff verification failed — proceeding without it")
     return {"takeoff_issues": issues, "takeoff_verify_attempts": attempts}
@@ -516,25 +536,47 @@ def price_fill_node(state: AgentState) -> dict:
             rows.append({**base, "price_source": "unpriced", "sheet_status": "missing",
                         "note": "no material or labor key on this line — estimator to price"})
 
-    # Retry-exhausted verifier flags (verify_takeoff_node): the takeoff
-    # still contradicts an "already exists" slot or contradicts itself
-    # after one corrective retry. Never let that reach the total silently
-    # -- neutralize exactly those lines into the same "unpriced" contract
-    # every other unresolved line already uses, so they surface in the
-    # estimator's existing review flow instead of being priced wrong.
-    flagged = {i["line_id"]: i.get("reason", "")
-              for i in (state.get("takeoff_issues") or []) if i.get("line_id")}
-    if flagged:
+    # Retry-exhausted verifier flags (verify_takeoff_node): still unresolved
+    # after one corrective retry. Never let either failure class reach the
+    # total silently.
+    issues = state.get("takeoff_issues") or []
+
+    # Contradiction: an existing row is wrong -- neutralize it into the same
+    # "unpriced" contract every other unresolved line already uses, so it
+    # surfaces in the estimator's existing review flow instead of being
+    # priced wrong.
+    contradictions = {i["line_id"]: i.get("reason", "") for i in issues
+                      if i.get("type") == "contradiction"}
+    if contradictions:
         rows = [
             {**r, "price_source": "unpriced", "unit_price_low_cad": None,
              "unit_price_high_cad": None, "unit_price_quoted_cad": None,
              "extended_low_cad": None, "extended_high_cad": None,
              "extended_quoted_cad": None,
-             "note": (f"takeoff verifier flagged this line: {flagged[r['takeoff_line_ref']]} "
-                      "— estimator to confirm before pricing")}
-            if r.get("takeoff_line_ref") in flagged else r
+             "note": (f"takeoff verifier flagged this line: "
+                      f"{contradictions[r['takeoff_line_ref']]} — estimator to "
+                      "confirm before pricing")}
+            if r.get("takeoff_line_ref") in contradictions else r
             for r in rows
         ]
+
+    # Omission: a filled intake slot's scope has NO row to neutralize --
+    # there's no line at all. Inject a synthetic unpriced placeholder line
+    # instead, same precedent as _enforce_code_coverage's injected line for
+    # a dropped mandatory code item. Confirmed live: a filled bathroom-
+    # rough-in slot with zero bathroom takeoff lines, ~$20k of scope
+    # silently missing with nothing in the draft to flag it.
+    for i in issues:
+        if i.get("type") != "omission":
+            continue
+        slot = i["slot"]
+        rows.append({
+            "category": "verifier_flagged", "description": f"Possible missing scope: {slot}",
+            "quantity": 0, "unit": "lump_sum", "takeoff_line_ref": f"omission-{slot}",
+            "price_source": "unpriced", "sheet_status": "missing",
+            "note": (f"takeoff verifier: {i.get('reason', '')} — no takeoff line "
+                     "addresses this intake slot; estimator to confirm scope and "
+                     "price if applicable")})
 
     return {"price_resolution": rows}
 
