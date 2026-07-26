@@ -119,7 +119,9 @@ Respond with a single JSON object and NOTHING else — no prose, no code fences:
 {{
   "gfa_sqft": <number|null>,
   "lines": [{{
-    "category": "<work category, price-sheet vocabulary where possible>",
+    "category": "bathroom" | "concrete" | "doors" | "drywall" | "electrical" | "flooring" | \
+"framing" | "insulation" | "kitchen" | "paint" | "subfloor" | "windows" | "stairs" | \
+"demolition" | "plumbing" | "hvac" | "code_required",
     "item": "<material price-sheet key where possible, e.g. "lvp", else empty>",
     "trade": "<labor-rate key where the work needs installed labor, e.g. "framing", else empty>",
     "allowance_item": "<tier-allowance key for a finish choice, e.g. "quartz_countertop", else empty>",
@@ -129,7 +131,10 @@ Respond with a single JSON object and NOTHING else — no prose, no code fences:
     "basis": "<auditable derivation, e.g. §4 drywall formula on GFA 900>",
     "source": "guideline_s4" | "comparable" | "code_item" | "assumption",
     "comparable_ref": "<project code when source is comparable, else empty>",
-    "code_item_ref": "<the codes-checklist item id this line satisfies, else empty>"
+    "code_item_ref": "<the codes-checklist item id this line satisfies, else empty>",
+    "instance": "<empty if there's only one of this category on the project; else a stable \
+label distinguishing which physical one this line belongs to, e.g. "bathroom_1"/"bathroom_2" \
+for a 2-bathroom project — every line for that same physical bathroom uses the same label>"
   }}],
   "assumptions": ["<each unknown slot or guessed dimension, stated>"]
 }}
@@ -160,6 +165,11 @@ job per physical X — count the actual bathrooms/doors/openings/wells this proj
 the intake slots) and emit exactly that many lines for that trade, never more. Do not split \
 ONE bathroom's (or door's, or opening's) own scope — rough-in, tile, fixtures, vanity install \
 all belong to the SAME single "bathroom_build" line for that bathroom, not one line each.
+- When a project has more than one physical instance of a "bathroom" or "kitchen" category \
+(e.g. 2 bathrooms), every line belonging to the same physical one shares the same "instance" \
+label ("bathroom_1", "bathroom_2", ...) so the draft can present them as separate, clearly \
+labeled sections rather than one merged total. Leave "instance" empty when the project has \
+only one of that category — don't invent a label for a singleton.
 - A trade's labor rate has ONE fixed physical unit (per_door, per_opening, per_well, per_head, \
 per_bathroom, per_sqft_floor, per_sqft_surface, lump_sum — see its own rate-sheet unit); never \
 assign a trade whose unit doesn't match this line's own "quantity"/"unit" (e.g. \

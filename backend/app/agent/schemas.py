@@ -36,9 +36,27 @@ class CodesChecklist(BaseModel):
     notes: str = ""
 
 
+# Closed work-category vocabulary -- the union of every material-prices.csv
+# and material-allowances-DRAFT-v0.csv `category` column value, plus the
+# trade-only structural labels the takeoff assigns to lines that have no
+# item/allowance_item of their own (demolition, plumbing, hvac), plus
+# "code_required" (the sentinel _enforce_code_coverage injects for a
+# mandatory code item the takeoff dropped). Every value here must have a
+# row in corpus/guidelines/quote-section-map-DRAFT-v0.csv (see
+# app/pricing/quote_sections.py) so the eventual deterministic renderer can
+# place every line in its section -- previously `category` was a plain str,
+# and price_fill_node/the drafting LLM had no way to reject an
+# out-of-vocabulary value the takeoff invented.
+TakeoffCategory = Literal[
+    "bathroom", "concrete", "doors", "drywall", "electrical", "flooring",
+    "framing", "insulation", "kitchen", "paint", "subfloor", "windows",
+    "stairs", "demolition", "plumbing", "hvac", "code_required",
+]
+
+
 class TakeoffLine(BaseModel):
     id: str = ""                         # assigned in code after validation
-    category: str                        # work-category / price-sheet vocabulary
+    category: TakeoffCategory            # work-category / price-sheet vocabulary
     item: str = ""                       # material-prices.csv key where possible ("lvp")
     trade: str = ""                      # labor-rates.csv trade key, parallel to item
     allowance_item: str = ""             # material-allowances.csv key for tier-differentiated finishes
@@ -49,6 +67,11 @@ class TakeoffLine(BaseModel):
     source: Literal["guideline_s4", "comparable", "code_item", "assumption"] = "assumption"
     comparable_ref: str = ""             # project code when source == "comparable"
     code_item_ref: str = ""              # CodeItem.id when source == "code_item"
+    instance: str = ""                   # "" for a singleton section; a stable label
+                                          # ("bathroom_1", "bathroom_2") when intake
+                                          # indicates more than one of this category --
+                                          # the eventual renderer repeats that category's
+                                          # section heading once per distinct instance
 
 
 class Takeoff(BaseModel):
