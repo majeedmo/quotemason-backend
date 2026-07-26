@@ -20,6 +20,8 @@ class AgentState(TypedDict, total=False):
     codes_checklist: dict | None   # schemas.CodesChecklist.model_dump() (stage 1)
     takeoff: dict | None           # schemas.Takeoff.model_dump() (stage 2)
     price_resolution: list[dict]   # code-built priced rows (between stages 2-3)
+    takeoff_issues: list[dict]     # [{line_id, reason}] from verify_takeoff_node
+    takeoff_verify_attempts: int   # retry counter; reset to 0 by codes_node
     draft: str | None
     routing_packet: dict | None    # §6.3 estimator hand-off
     estimator_feedback: str | None  # set on a /revise invoke; cleared by draft

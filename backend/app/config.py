@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     drafting_model: str = "anthropic/claude-sonnet-5"
     intake_model: str = "anthropic/claude-haiku-4.5"
     takeoff_model: str = "anthropic/claude-haiku-4.5"
+    takeoff_verifier_model: str = "anthropic/claude-haiku-4.5"
     judge_model: str = "openai/gpt-5.1"
 
     tavily_api_key: str = ""
