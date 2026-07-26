@@ -325,6 +325,56 @@ def test_price_fill_stale_row_falls_back_to_tavily(monkeypatch):
     assert row["answer"].startswith("$5-6")
 
 
+def test_price_fill_unit_mismatch_does_not_multiply_wrong_basis(monkeypatch):
+    """Live bug: a takeoff line quantified paint coverage as 1800 sqft, but
+    the sheet only has interior_paint priced per_gallon_cad ($45-75/gal) --
+    qty * price computed a $108,000 phantom line (~66% of that quote's
+    total) instead of falling back like any other unpriceable line."""
+    from datetime import date
+    from app.pricing.materials import PriceRow
+    per_gallon = PriceRow(category="paint", item="interior_paint",
+                          unit="per_gallon_cad", price_low_cad=45, price_high_cad=75,
+                          updated_at=date.today(), source="supplier list")
+    monkeypatch.setattr(nodes.materials, "lookup", lambda c, i: per_gallon)
+    monkeypatch.setattr(nodes.settings, "tavily_api_key", "")
+    out = price_fill_node(_takeoff_state(
+        {"category": "paint", "item": "interior_paint", "quantity": 1800,
+         "unit": "sqft", "description": "Interior paint"}))
+    row = out["price_resolution"][0]
+    assert row["price_source"] == "unpriced"
+    assert "unit_mismatch" in row["sheet_status"]
+    assert "estimator to price" in row["note"]
+
+
+def test_price_fill_matching_unit_still_prices_normally(monkeypatch):
+    """Guardrail must not gate legitimate per_sqft_cad sheet rows priced by
+    a takeoff line correctly quantified in sqft."""
+    monkeypatch.setattr(nodes.settings, "tavily_api_key", "")
+    out = price_fill_node(_takeoff_state(
+        {"category": "flooring", "item": "lvp", "description": "LVP",
+         "quantity": 100, "unit": "sqft"}))
+    row = out["price_resolution"][0]
+    assert row["price_source"] == "price_sheet"
+
+
+def test_price_fill_each_unit_is_not_gated_by_measured_unit_check(monkeypatch):
+    """"each"/"lump_sum" takeoff lines legitimately price against several
+    different count-based sheet units (per_door_cad, per_fixture_cad, ...) --
+    the mismatch guard must only gate measurement units, not these."""
+    from datetime import date
+    from app.pricing.materials import PriceRow
+    per_door = PriceRow(category="doors", item="interior", unit="per_door_cad",
+                        price_low_cad=180, price_high_cad=320,
+                        updated_at=date.today(), source="supplier list")
+    monkeypatch.setattr(nodes.materials, "lookup", lambda c, i: per_door)
+    monkeypatch.setattr(nodes.settings, "tavily_api_key", "")
+    out = price_fill_node(_takeoff_state(
+        {"category": "doors", "item": "interior", "quantity": 4, "unit": "each"}))
+    row = out["price_resolution"][0]
+    assert row["price_source"] == "price_sheet"
+    assert row["extended_quoted_cad"] == round(4 * row["unit_price_quoted_cad"], 2)
+
+
 def test_price_fill_empty_takeoff_yields_no_rows(monkeypatch):
     monkeypatch.setattr(nodes.settings, "tavily_api_key", "")
     assert price_fill_node({"takeoff": None}) == {"price_resolution": []}

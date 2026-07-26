@@ -412,6 +412,18 @@ def verify_takeoff_node(state: AgentState) -> dict:
 
 _LABOR_LUMP_UNITS = {"lump_sum"}
 
+# Takeoff line unit -> the price-sheet unit it must match before qty * price
+# is trusted. Only measurement units are gated ("each"/"lump_sum" takeoff
+# lines legitimately price against several different count-based sheet units
+# -- per_door_cad, per_fixture_cad, per_opening_cad, per_unit_cad,
+# per_bag_cad, "unit" -- so those are left unconstrained).
+_MEASURED_SHEET_UNIT = {
+    "sqft": "per_sqft_cad",
+    "linear_ft": "per_linear_ft_cad",
+    "gallon": "per_gallon_cad",
+    "sheet": "per_sheet_cad",
+}
+
 
 def price_fill_node(state: AgentState) -> dict:
     """Deterministic price resolution — no LLM. Sheet-first (staleness-gated
@@ -465,7 +477,10 @@ def price_fill_node(state: AgentState) -> dict:
         allowance-fallback path (a spec-only tier cell falls back to the
         material sheet under the same key)."""
         sheet_row = materials.lookup(cat, item)
-        if sheet_row and not materials.is_stale(sheet_row):
+        expected_sheet_unit = _MEASURED_SHEET_UNIT.get(base.get("unit", ""))
+        unit_mismatch = bool(sheet_row and expected_sheet_unit
+                             and sheet_row.unit != expected_sheet_unit)
+        if sheet_row and not materials.is_stale(sheet_row) and not unit_mismatch:
             quoted = materials.quoted_price(sheet_row)
             return {**base, "item": item,
                    "unit_price_low_cad": sheet_row.price_low_cad,
@@ -479,7 +494,17 @@ def price_fill_node(state: AgentState) -> dict:
                    "source_detail": (f"{sheet_row.source} (updated "
                                      f"{sheet_row.updated_at.isoformat()})"),
                    "stale": False}
-        status = "stale" if sheet_row else "missing"
+        if unit_mismatch:
+            # The takeoff quantified this line in a unit (e.g. sqft of paint
+            # coverage) that doesn't match the sheet's pricing unit (e.g.
+            # per-gallon) -- qty * sheet_row.price would silently multiply
+            # the wrong basis (confirmed live: 1800 sqft x a $60/gallon paint
+            # price produced a $108,000 phantom line, ~66% of that quote's
+            # total, instead of the ~$900 the ~15 gallons actually needed).
+            # Never guess a conversion -- fall back like a missing sheet row.
+            status = f"unit_mismatch (sheet: {sheet_row.unit}, takeoff: {base.get('unit', '')})"
+        else:
+            status = "stale" if sheet_row else "missing"
         return _tavily_fallback({**base, "item": item}, desc or item, status)
 
     def _bare_key(key: str) -> str:
