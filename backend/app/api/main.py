@@ -244,6 +244,26 @@ def _record_generation_event(new_row: dict, trigger: str, duration_seconds: floa
                          new_row.get("id"))
 
 
+def _sync_generation_stats_to_checkpointer(thread_id: str, event_stats: list[dict]) -> None:
+    """Price-override endpoints call draft_node directly (bypassing
+    graph.invoke), so the checkpointer never learns about this event's own
+    new generation_stats entries -- without this, a LATER override/revision
+    on the same thread reads stale prior state and undercounts this one's
+    contribution to the cumulative total (confirmed live: a second price
+    override on a thread silently dropped the first one's own cost from the
+    displayed cumulative figure). Best-effort: the draft is already
+    successfully created and returned regardless of whether this succeeds."""
+    if not event_stats:
+        return
+    try:
+        deps.get_graph().update_state(
+            {"configurable": {"thread_id": thread_id}},
+            {"generation_stats": event_stats})
+    except Exception:
+        logger.exception("failed to sync generation_stats to checkpointer "
+                         "for thread %s", thread_id)
+
+
 def _log_guardrail_event(reason: str, thread_id: str,
                          property_key_val: str | None) -> None:
     """Best-effort LangSmith tag when a guardrail blocks a request — the
@@ -477,6 +497,7 @@ def override_line_price(quote_id: int, takeoff_line_ref: str, body: PriceOverrid
         price_source_before=price_source_before,
         source_quote_id=quote_id, result_quote_id=new_row["id"])
     _record_generation_event(new_row, "price_override", duration, event_stats)
+    _sync_generation_stats_to_checkpointer(row["thread_id"], event_stats)
     _log_price_override_to_langsmith(row, takeoff_line_ref, body.price_cad,
                                      body.note)
     return new_row
@@ -535,5 +556,6 @@ def override_line_prices(quote_id: int, body: PriceOverridesIn):
             price_source_before=price_sources_before[item.takeoff_line_ref],
             source_quote_id=quote_id, result_quote_id=new_row["id"])
     _record_generation_event(new_row, "price_override", duration, event_stats)
+    _sync_generation_stats_to_checkpointer(row["thread_id"], event_stats)
     _log_price_overrides_batch_to_langsmith(row, body.overrides)
     return new_row

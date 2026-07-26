@@ -121,6 +121,20 @@ class FakeGraph:
         values = self.state if self.get_state_override is None else self.get_state_override
         return type("FakeSnapshot", (), {"values": values})()
 
+    def update_state(self, config, values):
+        # Mirrors the real operator.add reducer for generation_stats
+        # specifically (confirmed against a real, isolated LangGraph
+        # checkpointer before relying on this in main.py): APPEND, don't
+        # overwrite. Applied to get_state_override so a subsequent
+        # get_state() call sees it, matching how a real checkpoint update
+        # is visible to the next read.
+        self.update_state_calls = getattr(self, "update_state_calls", [])
+        self.update_state_calls.append(values)
+        base = dict(self.get_state_override) if self.get_state_override is not None else dict(self.state)
+        if "generation_stats" in values:
+            base["generation_stats"] = (base.get("generation_stats") or []) + values["generation_stats"]
+        self.get_state_override = base
+
 
 @pytest.fixture
 def api(monkeypatch):
@@ -402,6 +416,42 @@ def test_override_price_creates_new_version(api, monkeypatch):
                      "price_cad": 450, "note": "site visit quote",
                      "price_source_before": "unpriced",
                      "source_quote_id": 1, "result_quote_id": 2}
+
+
+def test_second_price_override_does_not_undercount_first_overrides_cost(api, monkeypatch):
+    """Confirmed live: two price overrides on the same thread previously
+    silently dropped the first override's own cost from the second's
+    cumulative total, because override endpoints call draft_node directly
+    (bypassing graph.invoke) and never told the checkpointer about their
+    own new generation_stats entries -- so the second override's
+    _load_active_quote_state read stale prior state missing the first
+    one's contribution. _sync_generation_stats_to_checkpointer fixes this;
+    this test reproduces the exact two-in-a-row scenario."""
+    two_unpriced_state = {**DRAFT_STATE,
+                          "price_resolution": [
+                              {"category": "plumbing", "quantity": 1, "unit": "ea",
+                               "takeoff_line_ref": "t1", "price_source": "unpriced"},
+                              {"category": "electrical", "quantity": 1, "unit": "ea",
+                               "takeoff_line_ref": "t2", "price_source": "unpriced"},
+                          ]}
+    g = _set_graph(monkeypatch, two_unpriced_state)
+    api.post("/chat", json={"thread_id": "t1", "message": "spec"})
+
+    captured = {}
+    _fake_draft_node(monkeypatch, captured)
+    first = api.post("/quotes/1/lines/t1/price", json={"price_cad": 100}).json()
+    # v1's 0.024 (DRAFT_STATE) + this call's own 0.02
+    assert first["stage_outputs"]["generation_summary"]["total_cost_usd"] == pytest.approx(0.044)
+    # the checkpointer was told about this call's own new entry
+    assert g.update_state_calls == [{"generation_stats": [
+        {"stage": "draft", "model": "anthropic/claude-sonnet-5",
+         "input_tokens": 4000, "output_tokens": 1200, "cost_usd": 0.02}]}]
+
+    second = api.post(f"/quotes/{first['id']}/lines/t2/price", json={"price_cad": 200}).json()
+    # Must be 0.024 + 0.02 (first override) + 0.02 (second override) = 0.064,
+    # NOT 0.024 + 0.02 = 0.044 (which is what it would wrongly be if the
+    # second override's prior-state read missed the first override's cost).
+    assert second["stage_outputs"]["generation_summary"]["total_cost_usd"] == pytest.approx(0.064)
 
 
 def test_override_price_missing_quote(api, monkeypatch):
