@@ -573,6 +573,48 @@ def test_price_fill_allowance_missing_row_falls_back_and_can_still_be_unpriced(m
     assert row["allowance_item"] == "nonexistent"
 
 
+# --- draft total: computed in code, never left to the LLM's own summation ---
+
+def test_total_contract_value_sums_priced_rows_and_lists_excluded():
+    from app.agent.nodes import _total_contract_value
+    rows = [
+        {"description": "Flooring", "extended_quoted_cad": 100.5},
+        {"description": "Drywall", "extended_quoted_cad": 200},
+        {"description": "Floor drain", "price_source": "unpriced"},
+        {"category": "kitchen", "price_source": "tavily"},  # no extended_quoted_cad
+    ]
+    out = _total_contract_value(rows)
+    assert out["total_contract_value_cad"] == 300.5
+    assert out["excluded_unpriced_lines"] == ["Floor drain", "kitchen"]
+
+
+def test_total_contract_value_empty_price_resolution():
+    from app.agent.nodes import _total_contract_value
+    assert _total_contract_value([]) == {
+        "total_contract_value_cad": 0, "excluded_unpriced_lines": []}
+
+
+def test_draft_node_passes_computed_total_to_prompt(monkeypatch):
+    """The drafting LLM must receive the code-computed total verbatim --
+    this is what makes the total reliably present instead of depending on
+    the LLM to sum every line itself (seen live: intermittently omitted)."""
+    _patch_stage_retrievers(monkeypatch)
+    seen = {}
+
+    class _FakeDrafter:
+        def invoke(self, msgs):
+            seen["user_msg"] = msgs[-1][1]
+            return SimpleNamespace(content="# Quote")
+    monkeypatch.setattr(nodes, "drafting_model", lambda: _FakeDrafter())
+
+    from app.agent.nodes import draft_node
+    draft_node({"slots": {}, "flags": [],
+               "price_resolution": [{"description": "Flooring",
+                                     "extended_quoted_cad": 500}]})
+    assert "TOTAL CONTRACT VALUE" in seen["user_msg"]
+    assert '"total_contract_value_cad": 500' in seen["user_msg"]
+
+
 # --- traceability: code_item -> takeoff line -> price_resolution row --------
 
 def test_codes_node_assigns_sequential_ids_never_from_model(monkeypatch):
