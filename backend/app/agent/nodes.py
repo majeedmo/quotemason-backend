@@ -369,6 +369,53 @@ def _enforce_baseline_trades(takeoff: schemas.Takeoff) -> None:
         next_idx += 1
 
 
+# intake slot -> (trade, category, takeoff-line unit) for the trade that's
+# that slot's main labor line. Unlike _BASELINE_TRADES, these only apply
+# when the slot is actually filled -- a project's scope always needs
+# plumbing/HVAC, but not every project necessarily has a bathroom or
+# kitchen/wet bar in scope.
+_SLOT_SCOPED_TRADES: dict[str, tuple[str, str, str]] = {
+    "bathroom_rough_in": ("bathroom_build", "bathroom", "each"),
+    "kitchen": ("kitchen_install", "kitchen", "lump_sum"),
+}
+
+
+def _slot_filled(value) -> bool:
+    return value is not None and str(value).strip().lower() not in ("", "unknown", "none", "n/a")
+
+
+def _enforce_slot_scoped_trades(takeoff: schemas.Takeoff, slots: dict) -> None:
+    """bathroom_build and kitchen_install are each their category's single
+    largest labor line (~$5,750 and ~$2,625 respectively) -- when the
+    intake slot behind that scope is filled, the project has committed to
+    it existing, so a takeoff that only prices scattered fixture allowances
+    without the main build-out line understates that category by roughly
+    that whole amount. The omission verifier already flags this as
+    "Possible missing scope," but that still leaves it genuinely unpriced
+    until the estimator resolves the flag. Confirmed live: of 4
+    identical-spec quotes (bathroom_rough_in and kitchen both filled on
+    every one), 2 were missing the bathroom_build line entirely and 2 were
+    missing kitchen_install entirely, each swinging that category's
+    subtotal by roughly its full labor-line amount. Enforced here in code,
+    priced normally afterward through price_fill_node's own labor-rate
+    lookup -- matches _enforce_baseline_trades' pattern, just conditioned
+    on the relevant slot instead of applying unconditionally."""
+    present = {ln.trade for ln in takeoff.lines if ln.trade}
+    next_idx = len(takeoff.lines) + 1
+    for slot, (trade, category, unit) in _SLOT_SCOPED_TRADES.items():
+        if not _slot_filled(slots.get(slot)) or trade in present:
+            continue
+        takeoff.lines.append(schemas.TakeoffLine(
+            id=f"t{next_idx}", category=category, trade=trade, quantity=1,
+            unit=unit,
+            description=f"{trade.replace('_', ' ')} (baseline scope, intake: "
+                        f"{slot}={slots[slot]!r})",
+            basis=f"deterministically enforced -- intake slot '{slot}' is "
+                 f"filled, implying {category} scope exists; the takeoff "
+                 f"did not include a '{trade}' line", source="assumption"))
+        next_idx += 1
+
+
 def takeoff_node(state: AgentState) -> dict:
     """Stage 2: structured material-quantity takeoff from §4 rules of thumb,
     the codes checklist, and comparable past projects. Degrades to None —
@@ -415,6 +462,7 @@ def takeoff_node(state: AgentState) -> dict:
             _enforce_code_coverage(takeoff, checklist)
             _drop_non_line_item_code_refs(takeoff, checklist)
         _enforce_baseline_trades(takeoff)
+        _enforce_slot_scoped_trades(takeoff, s)
     return {"takeoff": takeoff.model_dump() if takeoff else None,
             "retrieved": {**state.get("retrieved", {}),
                           "past_project_quote": comparables},
