@@ -450,6 +450,78 @@ def test_price_fill_labor_quantity_based_multiplies_by_qty(monkeypatch):
     assert row["extended_quoted_cad"] == 550.0
 
 
+def test_price_fill_per_sqft_floor_labor_uses_gfa_not_the_lines_own_quantity(monkeypatch):
+    """Live bug: framing labor (per_sqft_floor) on a combined item+trade line
+    reused the line's own material-basis quantity (569 linear ft of studs)
+    instead of the project's actual floor area, undercounting labor.
+    per_sqft_floor is priced against the WHOLE project's floor area, not a
+    line-specific quantity -- once gfa_sqft is known, it must win."""
+    monkeypatch.setattr(nodes.settings, "tavily_api_key", "")
+    monkeypatch.setattr(nodes.labor, "lookup", lambda t, b: _labor_row())
+    out = price_fill_node(_takeoff_state(
+        {"id": "t1", "category": "framing", "item": "studs_and_plates",
+         "trade": "framing", "quantity": 569, "unit": "each"}, gfa_sqft=900))
+    labor_row = next(r for r in out["price_resolution"] if r.get("price_source") == "labor_rate")
+    assert labor_row["quantity"] == 900  # gfa_sqft, not the takeoff line's own 569
+    assert labor_row["extended_low_cad"] == round(900 * 4.50, 2)
+    assert labor_row["extended_high_cad"] == round(900 * 6.50, 2)
+
+
+def test_price_fill_per_sqft_surface_labor_converts_sheet_count_to_surface_area(monkeypatch):
+    """Live bug: drywall labor (per_sqft_surface) on a combined item+trade
+    line reused the material's sheet count (32) directly against a per-sqft
+    rate, undercounting labor ~48x ($44.03 instead of ~$2,100). 1 sheet =
+    4ft x 12ft = 48 sqft (materials.csv: drywall_sheet_12ft) -- a fixed
+    physical conversion, not a guess."""
+    monkeypatch.setattr(nodes.settings, "tavily_api_key", "")
+    monkeypatch.setattr(nodes.labor, "lookup",
+                        lambda t, b: _labor_row(trade="drywall_tape_mud",
+                                                unit="per_sqft_surface",
+                                                rate_low_cad=1.25, rate_high_cad=1.88))
+    out = price_fill_node(_takeoff_state(
+        {"id": "t1", "category": "drywall", "item": "drywall_sheet_12ft",
+         "trade": "drywall_tape_mud", "quantity": 32, "unit": "sheet"}))
+    labor_row = next(r for r in out["price_resolution"] if r.get("price_source") == "labor_rate")
+    assert labor_row["quantity"] == 32 * 48
+    assert labor_row["extended_low_cad"] == round(32 * 48 * 1.25, 2)
+
+
+def test_price_fill_labor_quantity_unaffected_for_count_based_units(monkeypatch):
+    """per_door/per_opening/per_bathroom/etc. labor rates legitimately share
+    the takeoff line's own "each"-style quantity -- the fix must not touch
+    these."""
+    monkeypatch.setattr(nodes.settings, "tavily_api_key", "")
+    monkeypatch.setattr(nodes.labor, "lookup",
+                        lambda t, b: _labor_row(trade="bathroom_build", unit="per_bathroom",
+                                                rate_low_cad=4000, rate_high_cad=7500))
+    out = price_fill_node(_takeoff_state(
+        {"id": "t1", "category": "bathroom", "trade": "bathroom_build",
+         "quantity": 1, "unit": "each"}, gfa_sqft=900))
+    labor_row = next(r for r in out["price_resolution"] if r.get("price_source") == "labor_rate")
+    assert labor_row["quantity"] == 1
+    assert labor_row["extended_low_cad"] == 4000.0
+
+
+def test_price_fill_tiling_per_sqft_floor_keeps_its_own_line_quantity(monkeypatch):
+    """Live regression in an earlier version of this same fix: tiling is
+    also priced per_sqft_floor, like framing/subfloor_dmx, but its rate
+    applies to the TILED ZONE (e.g. a 100 sqft bathroom floor), not the
+    whole project's GFA -- overriding it to GFA (900) inflated one bathroom
+    tile line from ~$550 to $4,950. Only framing/subfloor_dmx (which
+    genuinely cover the entire basement floor regardless of the takeoff
+    line's own quantity) should ever be overridden to GFA."""
+    monkeypatch.setattr(nodes.settings, "tavily_api_key", "")
+    monkeypatch.setattr(nodes.labor, "lookup",
+                        lambda t, b: _labor_row(trade="tiling", unit="per_sqft_floor",
+                                                rate_low_cad=4.00, rate_high_cad=7.00))
+    out = price_fill_node(_takeoff_state(
+        {"id": "t1", "category": "bathroom", "allowance_item": "floor_wall_tile",
+         "trade": "tiling", "quantity": 100, "unit": "sqft"}, gfa_sqft=900))
+    labor_row = next(r for r in out["price_resolution"] if r.get("price_source") == "labor_rate")
+    assert labor_row["quantity"] == 100  # the tile line's own area, not GFA
+    assert labor_row["extended_low_cad"] == 400.0
+
+
 def test_price_fill_labor_quoted_interpolates_within_band_by_gfa(monkeypatch):
     """End-to-end through the node: a per-unit rate reverses (near the
     band's top edge -> low rate), a lump-sum rate scales up (near the top
@@ -851,17 +923,44 @@ def test_drop_non_line_item_code_refs_removes_verify_on_site_lines():
     assert ids == {"t2", "t3"}  # t1 (verify_on_site) dropped; others kept
 
 
-def test_enforce_baseline_trades_injects_missing_hvac_and_plumbing():
-    """Live bug: 2 of 4 identical-spec quotes dropped HVAC and/or plumbing
-    entirely (0 takeoff lines) -- neither has an intake slot for the
-    omission verifier to check against, so this must be enforced in code."""
+_ALL_BASELINE_TRADES = {"plumbing_rough_and_finish", "hvac_rough_and_finish",
+                       "painting", "subfloor_dmx", "drywall_tape_mud"}
+
+
+def test_enforce_baseline_trades_injects_all_five_when_missing():
+    """Live bug: across two batches of 4 identical-spec quotes, HVAC and/or
+    plumbing were dropped entirely, and drywall/paint showed material
+    priced with installation labor silently missing ($716 vs $4,117 for
+    drywall, $2,930 vs $5,510 for paint) -- none of these five trades has
+    an intake slot for the omission verifier to check against, so this
+    must be enforced in code."""
     from app.agent.nodes import _enforce_baseline_trades
-    takeoff = schemas.Takeoff(lines=[
+    takeoff = schemas.Takeoff(gfa_sqft=900, lines=[
         schemas.TakeoffLine(id="t1", category="flooring", item="lvp", quantity=100, unit="sqft"),
     ])
     _enforce_baseline_trades(takeoff)
     trades = {ln.trade for ln in takeoff.lines if ln.trade}
-    assert trades == {"plumbing_rough_and_finish", "hvac_rough_and_finish"}
+    assert trades == _ALL_BASELINE_TRADES
+    # non-lump-sum trades get a real, non-trivial quantity, not a bare "1"
+    subfloor = next(ln for ln in takeoff.lines if ln.trade == "subfloor_dmx")
+    assert subfloor.quantity == 900
+    drywall = next(ln for ln in takeoff.lines if ln.trade == "drywall_tape_mud")
+    assert drywall.quantity > 100  # GFA-based fallback since no drywall material line exists
+
+
+def test_enforce_baseline_trades_derives_drywall_quantity_from_existing_material_line():
+    """When a drywall material line already exists, the injected labor
+    line's quantity is derived from ITS sheet count (1 sheet = 48 sqft)
+    rather than a second, independent GFA-based guess -- avoids introducing
+    a new inconsistent number on top of the one being fixed."""
+    from app.agent.nodes import _enforce_baseline_trades
+    takeoff = schemas.Takeoff(gfa_sqft=900, lines=[
+        schemas.TakeoffLine(id="t1", category="drywall", item="drywall_sheet_12ft",
+                            quantity=32, unit="sheet"),
+    ])
+    _enforce_baseline_trades(takeoff)
+    drywall_labor = next(ln for ln in takeoff.lines if ln.trade == "drywall_tape_mud")
+    assert drywall_labor.quantity == 32 * 48
 
 
 def test_enforce_baseline_trades_does_not_duplicate_existing_trade():
@@ -873,8 +972,8 @@ def test_enforce_baseline_trades_does_not_duplicate_existing_trade():
     _enforce_baseline_trades(takeoff)
     plumbing_lines = [ln for ln in takeoff.lines if ln.trade == "plumbing_rough_and_finish"]
     assert len(plumbing_lines) == 1
-    hvac_lines = [ln for ln in takeoff.lines if ln.trade == "hvac_rough_and_finish"]
-    assert len(hvac_lines) == 1
+    for trade in _ALL_BASELINE_TRADES - {"plumbing_rough_and_finish"}:
+        assert sum(1 for ln in takeoff.lines if ln.trade == trade) == 1
 
 
 def test_enforce_slot_scoped_trades_injects_when_slot_filled():
@@ -932,7 +1031,8 @@ def test_takeoff_node_injected_baseline_trades_price_normally(monkeypatch):
     monkeypatch.setattr(nodes.settings, "tavily_api_key", "")
     priced = price_fill_node({"takeoff": out["takeoff"]})["price_resolution"]
     for trade in ("hvac_rough_and_finish", "plumbing_rough_and_finish",
-                 "bathroom_build", "kitchen_install"):
+                 "bathroom_build", "kitchen_install", "painting",
+                 "subfloor_dmx", "drywall_tape_mud"):
         rows = [r for r in priced if r.get("trade") == trade]
         assert rows and rows[0]["price_source"] == "labor_rate", trade
 

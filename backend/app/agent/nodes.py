@@ -334,39 +334,68 @@ def _drop_non_line_item_code_refs(takeoff: schemas.Takeoff,
     ]
 
 
-# trade -> the category its baseline placeholder line is grouped under if
-# the takeoff drops it entirely (app/pricing/quote_sections.py already maps
-# both to real sections).
-_BASELINE_TRADES: dict[str, str] = {
+# trade -> (category, unit) its baseline placeholder line is grouped under
+# if the takeoff drops it entirely (app/pricing/quote_sections.py already
+# maps every category here to a real section). Lump-sum trades need no
+# quantity estimate at all (labor.py ignores quantity for a lump-sum rate);
+# subfloor_dmx and drywall_tape_mud are priced per_sqft_floor/per_sqft_surface
+# instead, so _enforce_baseline_trades derives a real quantity for those two.
+_BASELINE_LUMP_SUM_TRADES: dict[str, str] = {
     "plumbing_rough_and_finish": "plumbing",
     "hvac_rough_and_finish": "hvac",
+    "painting": "paint",
 }
 
 
 def _enforce_baseline_trades(takeoff: schemas.Takeoff) -> None:
-    """plumbing_rough_and_finish and hvac_rough_and_finish are near-universal
-    for both of Company A's scopes (every wet bar/kitchen needs water
-    supply+drain, every finished basement needs ventilation/duct tie-in,
-    per guideline §4) -- but neither has a dedicated intake slot, so the
-    omission verifier (built around slot-tied omissions) can't catch either
-    being dropped outright. Confirmed live: of 4 identical-spec quotes, one
-    was missing HVAC entirely and another was missing both HVAC and
-    plumbing entirely -- a ~$9,150 swing on a ~$50K quote. Enforced here in
-    code, not left to prompt compliance -- priced normally afterward through
-    price_fill_node's own labor-rate lookup, never left "unpriced"."""
+    """These five trades are near-universal for both of Company A's scopes
+    (every wet bar/kitchen needs water supply+drain, every finished basement
+    needs ventilation/duct tie-in, drywall, paint, and DMX subfloor -- the
+    last three explicitly called out in guideline §2/§4 as standard across
+    every tier) -- but none has a dedicated intake slot, so the omission
+    verifier (built around slot-tied omissions) can't catch any of them
+    being dropped outright. Confirmed live: across two batches of 4
+    identical-spec quotes, HVAC/plumbing were each missing outright in some
+    quotes (a ~$9,150 swing on a ~$50K quote), and drywall/paint showed the
+    same "material priced, installation labor silently missing" pattern
+    (drywall $716 material-only vs $4,117 material+labor; paint $2,930 vs
+    $5,510) -- confirmed by the material-vs-material+labor arithmetic
+    matching exactly. Enforced here in code, not left to prompt compliance
+    -- priced normally afterward through price_fill_node's own labor-rate
+    lookup, never left "unpriced"."""
     present = {ln.trade for ln in takeoff.lines if ln.trade}
     next_idx = len(takeoff.lines) + 1
-    for trade, category in _BASELINE_TRADES.items():
-        if trade in present:
-            continue
+
+    def _append(trade: str, category: str, quantity: float, unit: str) -> None:
+        nonlocal next_idx
         takeoff.lines.append(schemas.TakeoffLine(
-            id=f"t{next_idx}", category=category, trade=trade, quantity=1,
-            unit="lump_sum",
-            description=f"{trade.replace('_', ' ')} (baseline scope)",
+            id=f"t{next_idx}", category=category, trade=trade, quantity=quantity,
+            unit=unit, description=f"{trade.replace('_', ' ')} (baseline scope)",
             basis="deterministically enforced -- every project needs baseline "
-                 f"{category} rough-in/finish labor; the takeoff did not "
-                 f"include a '{trade}' line", source="assumption"))
+                 f"{category} rough-in/finish/install labor; the takeoff did "
+                 f"not include a '{trade}' line", source="assumption"))
         next_idx += 1
+
+    for trade, category in _BASELINE_LUMP_SUM_TRADES.items():
+        if trade not in present:
+            _append(trade, category, 1, "lump_sum")
+
+    if "subfloor_dmx" not in present:
+        # per_sqft_floor -- GFA is the natural, directly-applicable quantity.
+        _append("subfloor_dmx", "subfloor", round(takeoff.gfa_sqft or 900.0, 1), "sqft")
+
+    if "drywall_tape_mud" not in present:
+        # per_sqft_surface (wall+ceiling), not per_sqft_floor -- derive from
+        # the takeoff's OWN drywall material sheet count (1 sheet = 4x12ft =
+        # 48 sqft) rather than re-estimating independently from GFA, which
+        # would risk introducing a SECOND inconsistent number on top of the
+        # one this function exists to fix. Only falls back to a GFA-based
+        # estimate when there's no drywall material line to anchor to at all.
+        sheets = sum(ln.quantity for ln in takeoff.lines
+                    if ln.category == "drywall" and ln.item)
+        surface_sqft = (round(sheets * 48, 1) if sheets
+                       else round((takeoff.gfa_sqft or 900.0) * 1.7, 1))
+        _append("drywall_tape_mud", "drywall", surface_sqft, "sqft")
 
 
 # intake slot -> (trade, category, takeoff-line unit) for the trade that's
@@ -520,6 +549,45 @@ def verify_takeoff_node(state: AgentState) -> dict:
 
 
 _LABOR_LUMP_UNITS = {"lump_sum"}
+
+
+# per_sqft_floor trades whose rate applies to the WHOLE basement's floor
+# area, not a line-specific sub-area. tiling and flooring_install_lvp are
+# also per_sqft_floor but scale with a subset of the floor (the tiled zone,
+# the LVP-covered area) -- their own takeoff-line quantity is already the
+# right basis for that, unlike framing/subfloor_dmx which always cover the
+# entire GFA regardless of how the takeoff quantified that one line.
+_WHOLE_FLOOR_TRADES = {"framing", "subfloor_dmx"}
+
+
+def _labor_quantity(trade: str, labor_unit: str, line_qty: float, line_unit: str,
+                    gfa_sqft: float | None) -> float:
+    """A takeoff line's own quantity/unit describes its MATERIAL basis (32
+    drywall sheets, 569 linear ft of studs) -- but a non-lump labor rate is
+    often priced on a completely different physical basis (surface sqft,
+    floor sqft), and blindly reusing the material's quantity silently
+    undercounts labor by whatever factor separates the two units. Confirmed
+    live: a combined item+trade takeoff line priced drywall labor as 32
+    (sheets) x $1.38/sqft-surface = $44.03 instead of the correct ~$2,100
+    (32 sheets = 1,536 sqft surface, a fixed physical conversion -- a
+    drywall_sheet_12ft sheet is 4ft x 12ft) -- a ~48x undercount. Framing
+    labor was similarly computed as 569 (linear ft of studs) x $2.20/sqft-
+    floor = $1,251.80 instead of the project's actual floor area x rate.
+
+    Gating the floor-area override to _WHOLE_FLOOR_TRADES specifically
+    (not just "any per_sqft_floor rate") matters: an earlier version of
+    this fix applied it unconditionally and broke tiling -- a bathroom
+    tile line's own 100 sqft (the tiled zone) got overridden to the
+    project's full 900 sqft GFA, inflating that one line from ~$550 to
+    $4,950. Falls back to `line_qty` unchanged for every other (trade,
+    unit) combination -- count-based labor units (per_door, per_opening,
+    per_bathroom, per_well, per_head) legitimately share the takeoff
+    line's own "each"-style quantity, and that's already correct."""
+    if trade in _WHOLE_FLOOR_TRADES and labor_unit == "per_sqft_floor":
+        return gfa_sqft if gfa_sqft else line_qty
+    if labor_unit == "per_sqft_surface" and line_unit == "sheet":
+        return line_qty * 48
+    return line_qty
 
 # Takeoff line unit -> the price-sheet unit it must match before qty * price
 # is trusted. Only measurement units are gated ("each"/"lump_sum" takeoff
@@ -682,11 +750,17 @@ def price_fill_node(state: AgentState) -> dict:
                                      + " — estimator to price")})
             else:
                 is_lump = labor_row.unit in _LABOR_LUMP_UNITS
+                labor_qty = qty if is_lump else _labor_quantity(trade, labor_row.unit, qty, unit, gfa_sqft)
                 quoted = labor.quoted_rate(labor_row, gfa_sqft)
-                ext_low = labor_row.rate_low_cad if is_lump else round(qty * labor_row.rate_low_cad, 2)
-                ext_high = labor_row.rate_high_cad if is_lump else round(qty * labor_row.rate_high_cad, 2)
-                ext_quoted = quoted if is_lump else round(qty * quoted, 2)
+                ext_low = labor_row.rate_low_cad if is_lump else round(labor_qty * labor_row.rate_low_cad, 2)
+                ext_high = labor_row.rate_high_cad if is_lump else round(labor_qty * labor_row.rate_high_cad, 2)
+                ext_quoted = quoted if is_lump else round(labor_qty * quoted, 2)
                 row = {**base, "trade": trade,
+                      # Only overridden from the takeoff line's own
+                      # quantity/unit when _labor_quantity actually
+                      # corrected it -- otherwise identical to `base` and a
+                      # no-op, preserving every already-correct case.
+                      "quantity": labor_qty, "unit": labor_row.unit if labor_qty != qty else unit,
                       "unit_price_low_cad": labor_row.rate_low_cad,
                       "unit_price_high_cad": labor_row.rate_high_cad,
                       "unit_price_quoted_cad": round(quoted, 2),
