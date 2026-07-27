@@ -877,6 +877,44 @@ def test_enforce_baseline_trades_does_not_duplicate_existing_trade():
     assert len(hvac_lines) == 1
 
 
+def test_enforce_slot_scoped_trades_injects_when_slot_filled():
+    """Live bug: of 4 identical-spec quotes (bathroom_rough_in and kitchen
+    both filled on every one), 2 dropped bathroom_build entirely and 2
+    dropped kitchen_install entirely -- only scattered fixture allowances
+    got priced, understating each category by roughly its whole labor-line
+    amount ($5,750 / $2,625)."""
+    from app.agent.nodes import _enforce_slot_scoped_trades
+    takeoff = schemas.Takeoff(lines=[
+        schemas.TakeoffLine(id="t1", category="bathroom", allowance_item="toilet",
+                            quantity=1, unit="each"),
+    ])
+    slots = {"bathroom_rough_in": "existing rough-in below slab", "kitchen": "wet bar only"}
+    _enforce_slot_scoped_trades(takeoff, slots)
+    trades = {ln.trade for ln in takeoff.lines if ln.trade}
+    assert trades == {"bathroom_build", "kitchen_install"}
+
+
+def test_enforce_slot_scoped_trades_skips_unfilled_or_unknown_slot():
+    from app.agent.nodes import _enforce_slot_scoped_trades
+    takeoff = schemas.Takeoff(lines=[])
+    for slots in ({}, {"bathroom_rough_in": "unknown", "kitchen": None},
+                  {"bathroom_rough_in": "", "kitchen": "n/a"}):
+        t = schemas.Takeoff(lines=[])
+        _enforce_slot_scoped_trades(t, slots)
+        assert t.lines == []
+
+
+def test_enforce_slot_scoped_trades_does_not_duplicate_existing_trade():
+    from app.agent.nodes import _enforce_slot_scoped_trades
+    takeoff = schemas.Takeoff(lines=[
+        schemas.TakeoffLine(id="t1", category="bathroom", trade="bathroom_build",
+                            quantity=1, unit="each"),
+    ])
+    _enforce_slot_scoped_trades(takeoff, {"bathroom_rough_in": "existing rough-in"})
+    bathroom_lines = [ln for ln in takeoff.lines if ln.trade == "bathroom_build"]
+    assert len(bathroom_lines) == 1
+
+
 def test_takeoff_node_injected_baseline_trades_price_normally(monkeypatch):
     """The injected baseline lines must flow through price_fill_node's
     normal labor-rate lookup, not end up "unpriced" -- they're real,
@@ -888,13 +926,15 @@ def test_takeoff_node_injected_baseline_trades_price_normally(monkeypatch):
         "assumptions": []})
     model = _FakeStageModel(SimpleNamespace(content=takeoff_json))
     monkeypatch.setattr(nodes, "takeoff_model", lambda: model)
-    out = takeoff_node({"slots": {"scope": "finished basement"}})
+    out = takeoff_node({"slots": {"scope": "finished basement",
+                                  "bathroom_rough_in": "existing rough-in",
+                                  "kitchen": "wet bar only"}})
     monkeypatch.setattr(nodes.settings, "tavily_api_key", "")
     priced = price_fill_node({"takeoff": out["takeoff"]})["price_resolution"]
-    hvac_rows = [r for r in priced if r.get("trade") == "hvac_rough_and_finish"]
-    plumbing_rows = [r for r in priced if r.get("trade") == "plumbing_rough_and_finish"]
-    assert hvac_rows and hvac_rows[0]["price_source"] == "labor_rate"
-    assert plumbing_rows and plumbing_rows[0]["price_source"] == "labor_rate"
+    for trade in ("hvac_rough_and_finish", "plumbing_rough_and_finish",
+                 "bathroom_build", "kitchen_install"):
+        rows = [r for r in priced if r.get("trade") == trade]
+        assert rows and rows[0]["price_source"] == "labor_rate", trade
 
 
 def test_takeoff_node_injects_synthetic_line_for_uncovered_mandatory_code_item(monkeypatch):
