@@ -8,7 +8,7 @@ import pytest
 from langchain_core.messages import HumanMessage
 
 import app.agent.nodes as nodes
-from app.agent import guidelines, schemas
+from app.agent import guidelines, prompts, schemas
 from app.agent.nodes import (codes_node, intake_node, price_fill_node,
                              takeoff_node)
 from app.agent.state import AgentState
@@ -29,6 +29,18 @@ def test_section_4_gates_demolition_and_requires_baseline_trades():
     section_4 = guidelines.section("4")
     assert "nothing to demolish" in section_4
     assert "never omitted entirely" in section_4
+
+
+def test_takeoff_system_forbids_kitchen_install_double_counting():
+    """Locks in the fix for a live bug: the existing anti-double-count rule
+    only named "bathroom_build" -- a takeoff priced one line as a
+    kitchen_install lump sum (description already including "quartz
+    countertop... faucet installation") AND separately itemized the
+    countertop and faucet again for the same wet bar. The verifier caught
+    and neutralized it, but that left the whole kitchen category at $0."""
+    text = prompts.takeoff_system()
+    assert "kitchen_install" in text
+    assert "pick one representation, not both" in text
 
 
 def test_hard_route_keywords_from_doc():
@@ -924,7 +936,8 @@ def test_drop_non_line_item_code_refs_removes_verify_on_site_lines():
 
 
 _ALL_BASELINE_TRADES = {"plumbing_rough_and_finish", "hvac_rough_and_finish",
-                       "painting", "subfloor_dmx", "drywall_tape_mud"}
+                       "painting", "subfloor_dmx", "drywall_tape_mud",
+                       "electrical_rough_and_finish"}
 
 
 def test_enforce_baseline_trades_injects_all_five_when_missing():
