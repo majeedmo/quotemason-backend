@@ -344,19 +344,23 @@ _BASELINE_LUMP_SUM_TRADES: dict[str, str] = {
     "plumbing_rough_and_finish": "plumbing",
     "hvac_rough_and_finish": "hvac",
     "painting": "paint",
+    "electrical_rough_and_finish": "electrical",
 }
 
 
 def _enforce_baseline_trades(takeoff: schemas.Takeoff) -> None:
-    """These five trades are near-universal for both of Company A's scopes
-    (every wet bar/kitchen needs water supply+drain, every finished basement
-    needs ventilation/duct tie-in, drywall, paint, and DMX subfloor -- the
-    last three explicitly called out in guideline §2/§4 as standard across
-    every tier) -- but none has a dedicated intake slot, so the omission
+    """These six trades are near-universal for both of Company A's scopes
+    (every wet bar/kitchen needs water supply+drain and electrical
+    devices/circuits, every finished basement needs ventilation/duct
+    tie-in, drywall, paint, and DMX subfloor -- drywall/paint/subfloor
+    explicitly called out in guideline §2/§4 as standard across every
+    tier) -- but none has a dedicated intake slot, so the omission
     verifier (built around slot-tied omissions) can't catch any of them
-    being dropped outright. Confirmed live: across two batches of 4
-    identical-spec quotes, HVAC/plumbing were each missing outright in some
-    quotes (a ~$9,150 swing on a ~$50K quote), and drywall/paint showed the
+    being dropped outright. Confirmed live across several batches of 4
+    identical-spec quotes: HVAC/plumbing/electrical were each missing
+    outright in some quotes (electrical dropping a category from ~$6,900
+    to $477 -- only the pot-lights allowance line remained, no
+    electrical_rough_and_finish line at all), and drywall/paint showed the
     same "material priced, installation labor silently missing" pattern
     (drywall $716 material-only vs $4,117 material+labor; paint $2,930 vs
     $5,510) -- confirmed by the material-vs-material+labor arithmetic

@@ -159,12 +159,20 @@ physical thing. Pick whichever field actually applies (allowance_item for a tier
 finish, item for a generic/structural material) — never both for the same key.
 - Never invent a "bathroom_build" labor line AND itemize that same bathroom's \
 electrical/plumbing/tiling/drywall trade lines — pick one representation, not both, or the \
-cost double-counts.
+cost double-counts. The SAME rule applies to "kitchen_install": never invent a "kitchen_install" \
+lump-sum line covering "cabinets, countertop, backsplash, sink, faucet installation" AND ALSO \
+separately itemize the countertop/faucet/backsplash as their own allowance_item lines for that \
+same kitchen or wet bar — pick one representation, not both. (Confirmed live: a takeoff priced \
+one line as a kitchen_install lump sum whose own description already said "quartz countertop, \
+sink, faucet installation," then separately itemized the countertop and faucet again — the \
+verifier correctly caught and neutralized all three lines, but that left the whole kitchen \
+category at $0 until the estimator manually re-priced it.)
 - A trade priced "per_X" (per_bathroom, per_door, per_opening, per_well, per_head) is ONE \
 job per physical X — count the actual bathrooms/doors/openings/wells this project has (from \
 the intake slots) and emit exactly that many lines for that trade, never more. Do not split \
 ONE bathroom's (or door's, or opening's) own scope — rough-in, tile, fixtures, vanity install \
-all belong to the SAME single "bathroom_build" line for that bathroom, not one line each.
+all belong to the SAME single "bathroom_build" line for that bathroom, not one line each. The \
+same applies to "kitchen_install" and that kitchen/wet bar's own scope.
 - When a project has more than one physical instance of a "bathroom" or "kitchen" category \
 (e.g. 2 bathrooms), every line belonging to the same physical one shares the same "instance" \
 label ("bathroom_1", "bathroom_2", ...) so the draft can present them as separate, clearly \
