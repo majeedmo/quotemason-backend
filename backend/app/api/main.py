@@ -59,13 +59,17 @@ class ReviseIn(BaseModel):
 
 
 class PriceOverrideIn(BaseModel):
-    price_cad: float = Field(gt=0)
+    # ge=0, not gt=0 -- $0 is a legitimate estimator-entered price (e.g. an
+    # item already covered elsewhere, or a code-compliance line with no
+    # cost), confirmed live to be rejected outright by pydantic before this
+    # even reached the handler.
+    price_cad: float = Field(ge=0)
     note: str | None = None
 
 
 class PriceOverrideItem(BaseModel):
     takeoff_line_ref: str
-    price_cad: float = Field(gt=0)
+    price_cad: float = Field(ge=0)
     note: str | None = None
 
 
