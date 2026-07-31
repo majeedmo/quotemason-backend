@@ -418,6 +418,30 @@ def test_override_price_creates_new_version(api, monkeypatch):
                      "source_quote_id": 1, "result_quote_id": 2}
 
 
+def test_override_price_accepts_zero(api, monkeypatch):
+    """$0 is a legitimate estimator-entered price (e.g. an item already
+    covered elsewhere, or a code-compliance line with no cost) -- confirmed
+    live it was rejected outright (422) before reaching the handler at all,
+    because the request schema required price_cad > 0 instead of >= 0."""
+    _set_graph(monkeypatch, UNPRICED_STATE)
+    api.post("/chat", json={"thread_id": "t1", "message": "spec"})
+    captured = {}
+    _fake_draft_node(monkeypatch, captured)
+    out = api.post("/quotes/1/lines/t1/price",
+                   json={"price_cad": 0, "note": "no charge, covered elsewhere"})
+    assert out.status_code == 200
+    overridden = captured["price_resolution"][0]
+    assert overridden["price_source"] == "estimator_override"
+    assert overridden["extended_quoted_cad"] == 0
+
+
+def test_override_price_rejects_negative(api, monkeypatch):
+    _set_graph(monkeypatch, UNPRICED_STATE)
+    api.post("/chat", json={"thread_id": "t1", "message": "spec"})
+    out = api.post("/quotes/1/lines/t1/price", json={"price_cad": -10})
+    assert out.status_code == 422
+
+
 def test_second_price_override_does_not_undercount_first_overrides_cost(api, monkeypatch):
     """Confirmed live: two price overrides on the same thread previously
     silently dropped the first override's own cost from the second's
