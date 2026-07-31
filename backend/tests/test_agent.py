@@ -958,22 +958,147 @@ def test_enforce_baseline_trades_injects_all_five_when_missing():
     subfloor = next(ln for ln in takeoff.lines if ln.trade == "subfloor_dmx")
     assert subfloor.quantity == 900
     drywall = next(ln for ln in takeoff.lines if ln.trade == "drywall_tape_mud")
-    assert drywall.quantity > 100  # GFA-based fallback since no drywall material line exists
+    assert drywall.quantity > 100  # deterministic GFA-based §4 formula, not a bare "1"
+    # the MATERIAL side is also enforced, not just labor
+    items = {(ln.category, ln.item) for ln in takeoff.lines if ln.item}
+    assert ("subfloor", "dmx_panel") in items
+    assert ("paint", "interior_paint") in items
+    assert ("drywall", "drywall_sheet_12ft") in items
 
 
-def test_enforce_baseline_trades_derives_drywall_quantity_from_existing_material_line():
-    """When a drywall material line already exists, the injected labor
-    line's quantity is derived from ITS sheet count (1 sheet = 48 sqft)
-    rather than a second, independent GFA-based guess -- avoids introducing
-    a new inconsistent number on top of the one being fixed."""
+def test_enforce_baseline_trades_does_not_duplicate_existing_material():
+    """Live bug: labor-only enforcement left subfloor's dmx_panel material
+    ($3,600 of a $4,725 category) and paint's interior_paint material
+    silently absent in most of a batch of otherwise-identical quotes --
+    price_fill_node never creates a row at all for a line with no `item`,
+    so this was worse than "unpriced": the cost simply never appeared."""
+    from app.agent.nodes import _enforce_baseline_trades
+    takeoff = schemas.Takeoff(gfa_sqft=900, lines=[
+        schemas.TakeoffLine(id="t1", category="subfloor", item="dmx_panel",
+                            quantity=900, unit="sqft"),
+        schemas.TakeoffLine(id="t2", category="paint", item="interior_paint",
+                            quantity=15, unit="gallon"),
+    ])
+    _enforce_baseline_trades(takeoff)
+    subfloor_items = [ln for ln in takeoff.lines if ln.category == "subfloor" and ln.item]
+    assert len(subfloor_items) == 1  # not duplicated
+    paint_items = [ln for ln in takeoff.lines if ln.category == "paint" and ln.item]
+    assert len(paint_items) == 1  # not duplicated
+
+
+def test_enforce_baseline_trades_derives_paint_gallons_from_gfa_formula():
+    """Paint's injected material quantity shares the same deterministic,
+    §4-formula-based wall+ceiling surface-area estimate as drywall's
+    material/labor (all three cover the same physical surface) -- computed
+    from GFA per §4, not trusted from the takeoff model's own (occasionally
+    arithmetic-broken) drywall sheet count."""
     from app.agent.nodes import _enforce_baseline_trades
     takeoff = schemas.Takeoff(gfa_sqft=900, lines=[
         schemas.TakeoffLine(id="t1", category="drywall", item="drywall_sheet_12ft",
                             quantity=32, unit="sheet"),
     ])
     _enforce_baseline_trades(takeoff)
+    paint = next(ln for ln in takeoff.lines if ln.category == "paint" and ln.item == "interior_paint")
+    # surface_sqft = (900*0.55)*8 + 900 = 4860; gallons = 4860 * 3 / 350
+    assert paint.quantity == round(4860 * 3 / 350, 1)
+
+
+def test_takeoff_node_injected_baseline_material_prices_normally(monkeypatch):
+    """The injected subfloor/paint material lines must flow through
+    price_fill_node's normal material-sheet lookup, not vanish silently --
+    unlike an "unpriced" row, a line with no `item` at all never even
+    produces a price_resolution row, so this cost was previously invisible
+    in the draft, not just flagged."""
+    _patch_stage_retrievers(monkeypatch)
+    takeoff_json = json.dumps({"gfa_sqft": 900, "lines": [
+        {"category": "flooring", "item": "lvp", "quantity": 100, "unit": "sqft"}],
+        "assumptions": []})
+    model = _FakeStageModel(SimpleNamespace(content=takeoff_json))
+    monkeypatch.setattr(nodes, "takeoff_model", lambda: model)
+    out = takeoff_node({"slots": {"scope": "finished basement"}})
+    monkeypatch.setattr(nodes.settings, "tavily_api_key", "")
+    priced = price_fill_node({"takeoff": out["takeoff"]})["price_resolution"]
+    dmx_rows = [r for r in priced if r.get("item") == "dmx_panel"]
+    paint_rows = [r for r in priced if r.get("item") == "interior_paint"]
+    assert dmx_rows and dmx_rows[0]["price_source"] == "price_sheet"
+    assert paint_rows and paint_rows[0]["price_source"] == "price_sheet"
+
+
+def test_enforce_baseline_trades_computes_drywall_quantity_deterministically():
+    """The takeoff model's own drywall sheet count is not trusted, even when
+    a material line already exists -- confirmed live, its multi-step
+    arithmetic occasionally corrupts itself (divided by 32 twice in one
+    real run, undercounting ~27x). Both the labor quantity AND the existing
+    material line's own quantity are (re)computed from GFA per §4:
+    wall_linear_ft = GFA*0.55; surface = wall_linear_ft*8 + GFA; sheets =
+    surface/32*1.10."""
+    from app.agent.nodes import _enforce_baseline_trades
+    takeoff = schemas.Takeoff(gfa_sqft=900, lines=[
+        schemas.TakeoffLine(id="t1", category="drywall", item="drywall_sheet_12ft",
+                            quantity=32, unit="sheet"),
+    ])
+    _enforce_baseline_trades(takeoff)
+    # surface_sqft = (900*0.55)*8 + 900 = 4860
     drywall_labor = next(ln for ln in takeoff.lines if ln.trade == "drywall_tape_mud")
-    assert drywall_labor.quantity == 32 * 48
+    assert drywall_labor.quantity == 4860.0
+    drywall_material = next(ln for ln in takeoff.lines
+                            if ln.category == "drywall" and ln.item)
+    assert drywall_material.quantity == round(4860 / 32 * 1.10, 1)
+
+
+def test_enforce_baseline_trades_rescales_type_x_split_proportionally():
+    """A Type-X/standard drywall split (real fire-separation signal, §7) is
+    preserved -- rescaled proportionally to the deterministic total instead
+    of being collapsed to one line and losing the distinction."""
+    from app.agent.nodes import _enforce_baseline_trades
+    takeoff = schemas.Takeoff(gfa_sqft=900, lines=[
+        schemas.TakeoffLine(id="t1", category="drywall", item="drywall_sheet_12ft",
+                            quantity=32, unit="sheet", description="Type X"),
+        schemas.TakeoffLine(id="t2", category="drywall", item="drywall_sheet_12ft",
+                            quantity=136, unit="sheet", description="standard"),
+    ])
+    _enforce_baseline_trades(takeoff)
+    drywall_lines = [ln for ln in takeoff.lines if ln.category == "drywall" and ln.item]
+    assert len(drywall_lines) == 2  # split preserved, not collapsed
+    sheets_needed = round(4860 / 32 * 1.10, 1)
+    assert abs(sum(ln.quantity for ln in drywall_lines) - sheets_needed) < 0.1
+    # original 32:136 ratio (1:4.25) preserved
+    assert abs(drywall_lines[0].quantity * 4.25 - drywall_lines[1].quantity) < 0.5
+
+
+def test_enforce_baseline_trades_injects_drywall_material_when_missing():
+    """Drywall material itself now gets the same missing-coverage backstop
+    as subfloor/paint (PR #60) -- previously only drywall LABOR was
+    backstopped when missing; the material side had no injection path at
+    all."""
+    from app.agent.nodes import _enforce_baseline_trades
+    takeoff = schemas.Takeoff(gfa_sqft=900, lines=[])
+    _enforce_baseline_trades(takeoff)
+    drywall_material = next(ln for ln in takeoff.lines
+                            if ln.category == "drywall" and ln.item == "drywall_sheet_12ft")
+    assert drywall_material.quantity == round(4860 / 32 * 1.10, 1)
+    assert drywall_material.unit == "sheet"
+
+
+def test_enforce_baseline_trades_overrides_existing_paint_material_quantity():
+    """Live bug: when the takeoff model DOES supply its own interior_paint
+    line, its quantity isn't trustworthy either -- one real run computed
+    only the primer coat (13.9 -> 14 gal), silently dropping §4's own
+    "primer + 2 finish coats = x3" multiplier, a ~3x undercount. The
+    existing line's quantity is now overridden to the deterministic value,
+    not just injected when the model omits the line entirely (PR #60's
+    original behavior)."""
+    from app.agent.nodes import _enforce_baseline_trades
+    takeoff = schemas.Takeoff(gfa_sqft=900, lines=[
+        schemas.TakeoffLine(id="t1", category="paint", item="interior_paint",
+                            trade="painting", quantity=14, unit="gallon"),
+    ])
+    _enforce_baseline_trades(takeoff)
+    paint_material = next(ln for ln in takeoff.lines
+                          if ln.category == "paint" and ln.item == "interior_paint")
+    # surface_sqft = 4860; gallons = round(4860 * 3 / 350, 1)
+    assert paint_material.quantity == round(4860 * 3 / 350, 1)
+    assert paint_material.quantity != 14
 
 
 def test_enforce_baseline_trades_does_not_duplicate_existing_trade():

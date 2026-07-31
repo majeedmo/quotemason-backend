@@ -364,42 +364,125 @@ def _enforce_baseline_trades(takeoff: schemas.Takeoff) -> None:
     same "material priced, installation labor silently missing" pattern
     (drywall $716 material-only vs $4,117 material+labor; paint $2,930 vs
     $5,510) -- confirmed by the material-vs-material+labor arithmetic
-    matching exactly. Enforced here in code, not left to prompt compliance
-    -- priced normally afterward through price_fill_node's own labor-rate
-    lookup, never left "unpriced"."""
-    present = {ln.trade for ln in takeoff.lines if ln.trade}
+    matching exactly.
+
+    Enforcing the LABOR side (below) alone wasn't enough: it only tracks
+    `trade` presence, so a takeoff that dropped a category's MATERIAL item
+    instead (while its labor line was present, whether from the model or
+    this same function) had no backstop at all -- worse than "unpriced",
+    since price_fill_node never even creates a row for a line with no
+    `item` set, so the missing cost doesn't show up anywhere in the draft.
+    Confirmed live: subfloor's dmx_panel material ($3,600 of a $4,725
+    category) missing in 3 of 4 identical-spec quotes, and paint's
+    interior_paint material missing in some too -- together the single
+    largest source of remaining total-value spread across a batch (>85%
+    of it). Enforced here in code, not left to prompt compliance -- priced
+    normally afterward through price_fill_node's own material/labor-rate
+    lookups, never left silently absent."""
+    present_trades = {ln.trade for ln in takeoff.lines if ln.trade}
     next_idx = len(takeoff.lines) + 1
 
-    def _append(trade: str, category: str, quantity: float, unit: str) -> None:
+    def _append(*, category: str, quantity: float, unit: str,
+               trade: str = "", item: str = "") -> None:
         nonlocal next_idx
+        kind = "labor" if trade else "material"
+        key = trade or item
         takeoff.lines.append(schemas.TakeoffLine(
-            id=f"t{next_idx}", category=category, trade=trade, quantity=quantity,
-            unit=unit, description=f"{trade.replace('_', ' ')} (baseline scope)",
-            basis="deterministically enforced -- every project needs baseline "
-                 f"{category} rough-in/finish/install labor; the takeoff did "
-                 f"not include a '{trade}' line", source="assumption"))
+            id=f"t{next_idx}", category=category, trade=trade, item=item,
+            quantity=quantity, unit=unit,
+            description=f"{key.replace('_', ' ')} {kind} (baseline scope)",
+            basis=f"deterministically enforced -- every project needs baseline "
+                 f"{category} {kind}; the takeoff did not include a "
+                 f"{kind} line for it", source="assumption"))
         next_idx += 1
 
     for trade, category in _BASELINE_LUMP_SUM_TRADES.items():
-        if trade not in present:
-            _append(trade, category, 1, "lump_sum")
+        if trade not in present_trades:
+            _append(trade=trade, category=category, quantity=1, unit="lump_sum")
 
-    if "subfloor_dmx" not in present:
+    gfa = takeoff.gfa_sqft or 900.0
+
+    # A quantity-0 material line doesn't count as real coverage: confirmed
+    # live, the model sometimes writes a "level and dry, so maybe no prep
+    # needed" dmx_panel line with quantity 0 and the wrong unit ("sheet"
+    # instead of "sqft") -- guideline §2 lists DMX subfloor as constant
+    # across every tier for both scopes, so a genuine 0 is never correct
+    # here; treating it as "not represented" lets the real injection below
+    # fire instead of silently deferring to a line that price_fill_node's
+    # own unit-mismatch guard was always going to reject anyway.
+    def _has_real_material(category: str) -> bool:
+        return any(ln.category == category and ln.item and ln.quantity > 0
+                  for ln in takeoff.lines)
+
+    if "subfloor_dmx" not in present_trades:
         # per_sqft_floor -- GFA is the natural, directly-applicable quantity.
-        _append("subfloor_dmx", "subfloor", round(takeoff.gfa_sqft or 900.0, 1), "sqft")
+        _append(trade="subfloor_dmx", category="subfloor", quantity=round(gfa, 1), unit="sqft")
+    if not _has_real_material("subfloor"):
+        _append(item="dmx_panel", category="subfloor", quantity=round(gfa, 1), unit="sqft")
 
-    if "drywall_tape_mud" not in present:
-        # per_sqft_surface (wall+ceiling), not per_sqft_floor -- derive from
-        # the takeoff's OWN drywall material sheet count (1 sheet = 4x12ft =
-        # 48 sqft) rather than re-estimating independently from GFA, which
-        # would risk introducing a SECOND inconsistent number on top of the
-        # one this function exists to fix. Only falls back to a GFA-based
-        # estimate when there's no drywall material line to anchor to at all.
-        sheets = sum(ln.quantity for ln in takeoff.lines
-                    if ln.category == "drywall" and ln.item)
-        surface_sqft = (round(sheets * 48, 1) if sheets
-                       else round((takeoff.gfa_sqft or 900.0) * 1.7, 1))
-        _append("drywall_tape_mud", "drywall", surface_sqft, "sqft")
+    # Shared wall+ceiling surface-area estimate for drywall material AND
+    # labor AND paint's material -- all three cover the same physical
+    # quantity. Previously derived from the takeoff model's OWN drywall
+    # material sheet count, trusting its multi-step arithmetic -- confirmed
+    # live to occasionally corrupt itself: 1 of 5 identical-spec quotes
+    # divided by 32 a second time, treating its own already-computed
+    # 167-sheet answer as a sqft figure needing a second conversion,
+    # yielding 6 sheets instead of 167 (~27x undercount, which would have
+    # silently propagated into paint's material cost too via the old
+    # sheets-based derivation below). The model's WALL LINEAR FT estimate
+    # itself is reliable -- 495 ft for a 900 sqft GFA in 4 of 5 runs,
+    # exactly matching guideline §4's own "Framing: linear ft of partition
+    # wall ~= GFA x 0.55" formula (900 x 0.55 = 495) -- it's the multi-step
+    # sheet-count arithmetic applying that formula that occasionally
+    # breaks. Computed deterministically here instead, per §4's own
+    # drywall formula (wall linear ft x height + ceiling sqft, / 32 x 1.10
+    # waste); height fixed at 8ft, the guideline's own assumed basement
+    # ceiling and what every live-verified quote's intake reported. This
+    # also fixes a second, unrelated miscalibration surfaced by deriving
+    # the real formula: the old GFA-only fallback constant (gfa x 1.7,
+    # used when no drywall material line existed to anchor to) implied a
+    # surface area ~3.2x smaller than §4's formula actually works out to
+    # (gfa x 5.4) -- there's no separate fallback path left to be wrong.
+    wall_linear_ft = gfa * 0.55
+    surface_sqft = round(wall_linear_ft * 8 + gfa, 1)
+    sheets_needed = round(surface_sqft / 32 * 1.10, 1)
+
+    # Any Type-X/standard split the model made is a real fire-separation
+    # signal (§7), not noise -- rescale proportionally to the deterministic
+    # total instead of collapsing to one line and losing that distinction.
+    drywall_material_lines = [ln for ln in takeoff.lines
+                              if ln.category == "drywall" and ln.item]
+    if drywall_material_lines:
+        current_total = sum(ln.quantity for ln in drywall_material_lines)
+        if current_total > 0:
+            for ln in drywall_material_lines:
+                ln.quantity = round(ln.quantity / current_total * sheets_needed, 1)
+        else:
+            drywall_material_lines[0].quantity = sheets_needed
+    else:
+        _append(item="drywall_sheet_12ft", category="drywall",
+                quantity=sheets_needed, unit="sheet")
+
+    if "drywall_tape_mud" not in present_trades:
+        _append(trade="drywall_tape_mud", category="drywall", quantity=surface_sqft, unit="sqft")
+
+    # §4: 1 gallon per ~350 sqft per coat; primer + 2 finish coats = 3
+    # applications total. Same treatment as drywall above and for the same
+    # reason: confirmed live, when the takeoff model DOES supply its own
+    # interior_paint line it isn't always trustworthy either -- one run
+    # computed only the primer coat (13.9 -> 14 gal), silently dropping the
+    # x3 primer+2-finish-coats multiplier §4 itself specifies, a ~3x
+    # undercount. Overriding unconditionally (not just injecting when
+    # missing) closes that gap the same way the drywall fix above does.
+    gallons = round(surface_sqft * 3 / 350, 1)
+    paint_material_lines = [ln for ln in takeoff.lines
+                            if ln.category == "paint" and ln.item and ln.quantity > 0]
+    if paint_material_lines:
+        current_total = sum(ln.quantity for ln in paint_material_lines)
+        for ln in paint_material_lines:
+            ln.quantity = round(ln.quantity / current_total * gallons, 1)
+    else:
+        _append(item="interior_paint", category="paint", quantity=gallons, unit="gallon")
 
 
 # intake slot -> (trade, category, takeoff-line unit) for the trade that's
