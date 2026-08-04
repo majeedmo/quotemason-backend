@@ -48,6 +48,28 @@ The user identified additional problems on re-reviewing the submitted architectu
 
 ## Bugs found and fixed since the last update
 
+- **Three rendering faults on quote line items (quote #120, 2026-08-04, PR #64).**
+  Found while rehearsing the Demo Day walkthrough. All three were in
+  `app/agent/draft_render.py` — the pipeline computed the right data every time and
+  the renderer dropped it, so no pricing logic changed and the contract total was
+  unaffected. (a) **Line items looked duplicated**: a takeoff line normally resolves
+  into two `price_resolution` rows — material off the sheet, labour off the rate
+  table — and both inherit the *takeoff line's* description, so the same sentence
+  printed twice at two different prices (8 of quote #120's 30 lines). Rows now carry
+  a `— material` / `— labour` component label. (b) **Code-driven lines never showed
+  their clause**: the `takeoff.code_item_ref → codes_checklist.citation` link exists,
+  but `price_resolution` rows don't copy it, so by render time the clause was
+  unreachable and the Source column fell back to the price basis. Zero OBC citations
+  appeared in any table row across quotes #113, #118 and #120 — despite §5.19
+  requiring the clause *on the line*, and despite the demo pitch resting on exactly
+  that. `_code_citations()` rebuilds the join. (c) **The document contradicted
+  itself**: a redundant `unpriced` row sat alongside a real price for the same line,
+  putting an already-costed item into section 18's "this total excludes the following
+  unpriced lines" disclaimer; `_drop_redundant_unpriced()` suppresses it. Root cause
+  of (c) is in `price_fill`, not the renderer — see the open defect below. Verified
+  by replaying quote #120's stored state through the real renderer: 40 price rows →
+  39, total unchanged at $74,894.32. Suite 237 → 240 passed.
+
 - **Silent material-price loss on category-name mismatch (quote #22, 2026-07-25).**
   Auditing quote #22's 5 unpriced line items turned up 3 different causes, only
   one of which was an actual bug: (a) two were genuine price-sheet gaps
@@ -136,10 +158,59 @@ eval-harness numbers above almost exactly: baseline ~$0.70–0.75/quote vs.
 cheaper-takeoff ~$0.49/quote average — #22/#23 are baseline-era, #24 is the first
 live confirmation of the merged config's real-world cost.
 
+## Open defect: `price_fill` emits a guaranteed-unpriced row for spec-only allowances (2026-08-04)
+
+**Deferred until after Demo Day.** PR #64 masked the symptom in the renderer; the
+root cause is still live in `price_fill_node` (`app/agent/nodes.py`, the
+`if allowance_item:` branch around L807-825).
+
+**What happens.** A takeoff line can carry *both* `item` and `allowance_item`, and
+each goes down its own branch, so one line emits up to three price rows. Quote #120's
+interior paint (`t28`) is the reference case:
+
+| takeoff field | branch taken | result |
+|---|---|---|
+| `item: paint/interior_paint` | `_price_material` | ✅ $2,502.00 — supplier list |
+| `allowance_item: paint/brand` | allowance → **material-sheet fallback** | ❌ `unpriced` — "no fresh sheet price (missing)" |
+| `trade: painting` | `labor.lookup` | ✅ $2,750.00 |
+
+`allowances.lookup("paint", "brand")` finds a row, but `quoted_value` is `None`
+because brand/quality is a **spec-only cell at ESSENTIAL** — it describes what you
+get, it isn't a separate charge. The code then falls back to the material sheet
+"under the same key", i.e. it looks up an item literally called `brand`. No price
+sheet will ever have that, so this fallback **cannot succeed** for descriptor-style
+allowance keys; it only ever produces an unpriced row.
+
+**Why it mattered.** That phantom row rendered as a third table line repeating the
+same description, and — worse — pushed an already-costed item into section 18's
+*"this total excludes the following unpriced lines and is not yet final"* disclaimer,
+so the quote contradicted itself on screen. Spotted during demo rehearsal.
+
+**Two candidate fixes, neither attempted:**
+
+1. *Narrow* — skip the allowance→material fallback when the same takeoff line already
+   priced a material through `item`. Cheap, but leaves the dead lookup in place.
+2. *Principled* — don't fall back at all when the allowance row **exists** and is
+   spec-only at this tier. A spec-only cell means "included, no separate charge",
+   which is a different thing from "no allowance row found". Only the genuinely
+   missing-row case should reach the material sheet.
+
+(2) looks right, but it needs checking against the double-charge guard immediately
+above it (L795-805: pricing `item` *and* `allowance_item` together silently
+double-charged 6-15% of each quote across 22 real quotes / 43 lines) — the two
+branches interact, so change them together and re-run the quote-accuracy eval rather
+than reasoning about it in isolation.
+
+**Scope check before fixing:** only `t28` in quote #120 had both a priced and an
+unpriced row, so this is not yet known to be widespread — worth counting
+`price_source == "unpriced"` rows whose takeoff line also priced, across several
+stored quotes, to size the problem before choosing a fix.
+
 ## What's left
 
 Nothing below has started; no work begins on any of it until the user directs it:
 
+- The `price_fill` spec-only-allowance defect documented immediately above
 - Estimator authentication (§7.2 #4)
 - Scheduled price-refresh agent (the unbuilt half of §7.2 #2)
 - Further quote-accuracy calibration once Company A provides real labor-rate figures (the current 50% cut is data-grounded but explicitly a placeholder — see `docs/quote-accuracy-eval.md`)
