@@ -57,7 +57,59 @@ def _pretty_instance(instance: str) -> str:
     return instance.replace("_", " ").strip().title()
 
 
-def _row_source(row: dict) -> str:
+# price_source -> what the row is actually costing. A takeoff line usually
+# resolves into two rows (material off the sheet + labor off the rate table),
+# and both inherit the *takeoff line's* description, so without this the
+# table showed the same sentence twice at two different prices and read as a
+# duplicate -- reported live on quote #120, 2026-08-04.
+_COMPONENT_LABEL = {
+    "price_sheet": "material",
+    "allowance": "material",
+    "tavily": "material",
+    "labor_rate": "labour",
+}
+
+
+def _code_citations(state: dict) -> dict[str, str]:
+    """takeoff_line_ref -> the OBC/bylaw clause that forced the line.
+
+    The link exists in the data (takeoff line carries `code_item_ref`,
+    codes_checklist carries the citation) but `price_resolution` rows don't
+    copy it, so by render time the clause was unreachable and code-driven
+    lines showed only their price basis. §5.19 requires the clause on the
+    line, not just in the appendix.
+    """
+    by_id = {i.get("id"): i.get("citation")
+             for i in (state.get("codes_checklist") or {}).get("items") or []
+             if i.get("id") and i.get("citation")}
+    out: dict[str, str] = {}
+    for line in ((state.get("takeoff") or {}).get("lines") or []):
+        refs = [r.strip() for r in str(line.get("code_item_ref") or "").split(",") if r.strip()]
+        cites = [by_id[r] for r in refs if r in by_id]
+        if cites and line.get("id"):
+            out[str(line["id"])] = "; ".join(dict.fromkeys(cites))
+    return out
+
+
+def _drop_redundant_unpriced(price_resolution: list[dict]) -> list[dict]:
+    """Drop an "unpriced" row when the same takeoff line already priced.
+
+    price_fill can emit a stale-sheet fallback alongside a real sheet price
+    for the same line (confirmed on quote #120: interior paint resolved to
+    price_sheet $2,502 + labor_rate $2,750 *and* an "no fresh sheet price"
+    unpriced row). The stray row rendered as a third table line and, worse,
+    put an already-costed item into section 18's "this total excludes the
+    following unpriced lines" disclaimer -- so the document contradicted
+    itself. Genuinely unpriced lines are untouched.
+    """
+    priced = {str(r.get("takeoff_line_ref")) for r in price_resolution
+              if r.get("price_source") not in (None, "", "unpriced")}
+    return [r for r in price_resolution
+            if not (r.get("price_source") == "unpriced"
+                    and str(r.get("takeoff_line_ref")) in priced)]
+
+
+def _row_source(row: dict, citations: dict[str, str] | None = None) -> str:
     """One short citation per §5.19 -- every priced line must show its
     source, or be flagged unpriced with a reason."""
     source = row.get("price_source")
@@ -72,7 +124,9 @@ def _row_source(row: dict) -> str:
     elif source == "estimator_override":
         text = "estimator-provided price"
     else:
-        return f"estimator to price — {row.get('note') or 'no comparable on file'}"
+        clause = (citations or {}).get(str(row.get("takeoff_line_ref", "")))
+        base = f"estimator to price — {row.get('note') or 'no comparable on file'}"
+        return f"{base} [{clause}]" if clause else base
     notes = []
     if row.get("rate_unverified"):
         notes.append("rate unverified")
@@ -80,17 +134,22 @@ def _row_source(row: dict) -> str:
         notes.append("confirm on-site before finalizing")
     if row.get("note"):
         notes.append(row["note"])
-    return text + (f" ({'; '.join(notes)})" if notes else "")
+    text += f" ({'; '.join(notes)})" if notes else ""
+    clause = (citations or {}).get(str(row.get("takeoff_line_ref", "")))
+    return f"{text} [{clause}]" if clause else text
 
 
-def _row_line(row: dict) -> str:
+def _row_line(row: dict, citations: dict[str, str] | None = None) -> str:
     desc = (row.get("description") or row.get("item") or row.get("allowance_item")
            or row.get("trade") or row.get("category") or "")
+    component = _COMPONENT_LABEL.get(row.get("price_source"))
+    if component:
+        desc = f"{desc} — {component}"
     qty = row.get("quantity")
     qty_str = f"{qty:g}" if isinstance(qty, (int, float)) else "—"
     unit = row.get("unit", "")
     return (f"| {desc} | {qty_str} {unit} | {_fmt_money(row.get('extended_quoted_cad'))} "
-           f"| {_row_source(row)} |")
+           f"| {_row_source(row, citations)} |")
 
 
 _TABLE_HEADER = "| Item | Qty | Amount (CAD) | Source |\n|---|---|---|---|"
@@ -120,7 +179,8 @@ def _na_reason(section_number: int, slots: dict) -> str:
 
 
 def _render_cost_section(number: int, heading: str, rows: list[dict],
-                         slots: dict) -> tuple[str, float]:
+                         slots: dict,
+                         citations: dict[str, str] | None = None) -> tuple[str, float]:
     if not rows:
         return f"## {number}. {heading}\n\n$0.00 — {_na_reason(number, slots)}\n", 0.0
     instances: dict[str, list[dict]] = {}
@@ -145,7 +205,7 @@ def _render_cost_section(number: int, heading: str, rows: list[dict],
         inst_rows = instances[instance]
         block_heading = (f"## {number}. {heading} — {_pretty_instance(instance)}"
                          if instance else f"## {number}. {heading}")
-        table = "\n".join([_TABLE_HEADER] + [_row_line(r) for r in inst_rows])
+        table = "\n".join([_TABLE_HEADER] + [_row_line(r, citations) for r in inst_rows])
         subtotal = round(sum(r.get("extended_quoted_cad") or 0 for r in inst_rows), 2)
         total += subtotal
         blocks.append(f"{block_heading}\n\n{table}\n\nCategory subtotal: {_fmt_money(subtotal)}\n")
@@ -346,10 +406,11 @@ def render_draft(state: dict, narrative: "schemas.DraftNarrative") -> str:
     `narrative` (project summary + pricing confidence, the one remaining
     LLM call) is computed here from state -- see module docstring."""
     slots = state.get("slots") or {}
-    price_resolution = state.get("price_resolution") or []
+    price_resolution = _drop_redundant_unpriced(state.get("price_resolution") or [])
     takeoff = state.get("takeoff") or {}
     retrieved = state.get("retrieved") or {}
     tier = _resolve_tier(slots)
+    citations = _code_citations(state)
 
     rows_by_section: dict[int, list[dict]] = {n: [] for n, _ in quote_sections.WORK_CATEGORY_SECTIONS}
     for row in price_resolution:
@@ -359,7 +420,9 @@ def render_draft(state: dict, narrative: "schemas.DraftNarrative") -> str:
     sections_md = []
     subtotal_table_rows = []
     for number, heading in quote_sections.WORK_CATEGORY_SECTIONS:
-        body, subtotal = _render_cost_section(number, heading, rows_by_section.get(number, []), slots)
+        body, subtotal = _render_cost_section(number, heading,
+                                             rows_by_section.get(number, []),
+                                             slots, citations)
         sections_md.append(body)
         post_hst = round(subtotal * (1 + settings.hst_rate), 2)
         subtotal_table_rows.append(f"| {number}. {heading} | {_fmt_money(subtotal)} | {_fmt_money(post_hst)} |")

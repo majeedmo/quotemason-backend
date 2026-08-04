@@ -1,6 +1,7 @@
 """app/agent/draft_render.py -- the deterministic renderer that replaced
 the old free-form LLM-authored draft document. No network, no API keys."""
 
+from app.agent import draft_render
 from app.agent.draft_render import render_draft, total_contract_value
 from app.agent.schemas import DraftNarrative
 from app.pricing import quote_sections
@@ -218,3 +219,43 @@ def test_allowances_table_reflects_resolved_tier_label():
     draft = render_draft(_state(slots={"package_tier_budget": "SUPERIOR tier"}), NARRATIVE)
     idx = draft.index("## 19. Allowances Table")
     assert "SUPERIOR" in draft[idx:idx + 200]
+
+
+# --- quote #120 regressions (2026-08-04) -----------------------------------
+
+_CODES = {"items": [{"id": "c1", "citation": "OBC 9.9.10.1 — Egress Windows"}]}
+_TAKEOFF = {"lines": [{"id": "t1", "code_item_ref": "c1"},
+                      {"id": "t6", "code_item_ref": ""}]}
+
+
+def test_material_and_labour_rows_are_labelled_not_duplicated():
+    """Both rows inherit the takeoff line's description; without a component
+    label the table showed the same sentence twice at two prices."""
+    rows = [{"takeoff_line_ref": "t6", "description": "Drywall", "quantity": 1,
+             "unit": "sheet", "extended_quoted_cad": 10.0, "price_source": "price_sheet"},
+            {"takeoff_line_ref": "t6", "description": "Drywall", "quantity": 1,
+             "unit": "sheet", "extended_quoted_cad": 20.0, "price_source": "labor_rate"}]
+    out = [draft_render._row_line(r, {}) for r in rows]
+    assert "Drywall — material" in out[0]
+    assert "Drywall — labour" in out[1]
+
+
+def test_code_driven_line_carries_its_clause_on_the_row():
+    cites = draft_render._code_citations(
+        {"takeoff": _TAKEOFF, "codes_checklist": _CODES})
+    assert cites["t1"] == "OBC 9.9.10.1 — Egress Windows"
+    assert "t6" not in cites
+    row = {"takeoff_line_ref": "t1", "description": "Egress window", "quantity": 1,
+           "unit": "each", "extended_quoted_cad": 675.0, "price_source": "labor_rate"}
+    assert "OBC 9.9.10.1" in draft_render._row_line(row, cites)
+
+
+def test_unpriced_row_dropped_when_same_line_already_priced():
+    rows = [{"takeoff_line_ref": "t6", "price_source": "price_sheet",
+             "extended_quoted_cad": 10.0},
+            {"takeoff_line_ref": "t6", "price_source": "unpriced"},
+            {"takeoff_line_ref": "t9", "price_source": "unpriced"}]
+    kept = draft_render._drop_redundant_unpriced(rows)
+    assert len(kept) == 2
+    assert [r["takeoff_line_ref"] for r in kept] == ["t6", "t9"]
+    assert kept[1]["price_source"] == "unpriced"   # genuinely unpriced survives
