@@ -158,6 +158,39 @@ eval-harness numbers above almost exactly: baseline ~$0.70–0.75/quote vs.
 cheaper-takeoff ~$0.49/quote average — #22/#23 are baseline-era, #24 is the first
 live confirmation of the merged config's real-world cost.
 
+### ⚠ Superseded one day later by the deterministic renderer (2026-08-04 note)
+
+**The #22–#24 figures above are correct for 2026-07-25 and are now roughly 3× too
+slow and 2.5× too expensive.** The deterministic renderer (`app/agent/draft_render.py`,
+PR #48, `83f7f77`, merged 2026-07-26 — the day after these measurements) replaced the
+giant LLM drafting call with a small `schemas.DraftNarrative`, and that one change
+accounts for essentially the whole difference.
+
+Current profile, measured on quotes **#119–#122** (2026-08-04, `trigger = 'initial'`):
+avg **129.3s** and **$0.1810** per quote — vs. 373–517s and $0.45–0.73 above.
+
+Per-stage on quote #120 (11 LLM calls, $0.2039 total):
+
+| stage | model | calls | cost | output tokens |
+|---|---|---|---|---|
+| takeoff | haiku-4.5 | 2 | $0.0868 | 13,222 |
+| codes | haiku-4.5 | 4 | $0.0483 | 2,322 |
+| **draft** | **sonnet-5** | **1** | **$0.0397** | **880** |
+| takeoff_verify | haiku-4.5 | 2 | $0.0188 | 408 |
+| intake | haiku-4.5 | 2 | $0.0103 | 842 |
+
+Drafting was 30,257 output tokens / 297s on #24; it is now **880 tokens / $0.04**. The
+takeoff stage is now the cost centre, not drafting — so any future cost work should
+start there rather than repeating the 2026-07-25 conclusions.
+
+**Reading the dashboard widget:** `generation_dashboard_stats`
+(`app/quotes/store.py`) aggregates *every* row in `quote_generation_events` with no
+filter on `trigger`, so cheap price-override re-drafts (~11s, ~$0.04) are averaged in
+with full generations. The widget's "avg per generation" is therefore lower than the
+per-quote figure — 100.2s / $0.1458 across 28 blended events at the time of writing.
+It is not wrong, but it is not per-quote either. Adding a `trigger = 'initial'` filter
+(or reporting both) is an open, unstarted idea, deliberately deferred past Demo Day.
+
 ## Open defect: `price_fill` emits a guaranteed-unpriced row for spec-only allowances (2026-08-04)
 
 **Deferred until after Demo Day.** PR #64 masked the symptom in the renderer; the
