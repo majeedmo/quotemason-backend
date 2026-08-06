@@ -20,9 +20,12 @@ app/pricing/quote_sections.py for the category -> section mapping.
 
 from __future__ import annotations
 
+import re
+
 from app.agent import schemas
 from app.config import settings
-from app.pricing import allowances, quote_sections
+from app.contractor import get_contractor
+from app.pricing import allowances, labor, quote_sections
 
 # The takeoff verifier's omission checks name an intake *slot*, not a
 # category (there's no line to read a category off) -- this lets an
@@ -70,6 +73,50 @@ _COMPONENT_LABEL = {
 }
 
 
+# price_source -> the DOCUMENT the number was read from. Rows already carry
+# `source_detail`, but that holds the *contents* of the matched sheet row
+# ("supplier list", "wood stud partitions + bulkheads") and never says which
+# sheet it came out of -- so the Source column described a number without
+# identifying its provenance (raised by a judge, 2026-08-04). The document
+# name leads the cell; the detail follows it.
+_SOURCE_DOCUMENT = {
+    "price_sheet": "Contractor price sheet",
+    "allowance": "Material allowance table",
+    "labor_rate": "Labour rate sheet",
+    "tavily": "Live web price check",
+    "estimator_override": "Estimator override",
+}
+
+# The file behind each label, for the citations appendix (§24). Resolved
+# lazily -- the contractor's price sheet path is per-deployment.
+_SOURCE_DOCUMENT_PATH = {
+    "Contractor price sheet": lambda: get_contractor().prices_csv,
+    "Material allowance table": lambda: allowances.ALLOWANCES_CSV,
+    "Labour rate sheet": lambda: labor.LABOR_RATES_CSV,
+}
+
+_BAND = re.compile(r"^(?:small|medium|large)_(lt_)?(\d+)(?:_(\d+))?sqft$")
+
+# Trailing "-- estimator to price" on a price_fill note (see _row_source).
+_ESTIMATOR_TO_PRICE_TAIL = re.compile(r"\s*[—-]+\s*estimator to price\s*$", re.I)
+
+
+def _pretty_band(band: str) -> str:
+    """"medium_500_1000sqft" -> "500-1000 sqft jobs". The size word is dropped
+    because the numbers already say it. An unrecognised band falls through
+    unchanged -- a new band name must never blank the cell."""
+    band = (band or "").strip()
+    if band == "any":
+        return "any job size"
+    m = _BAND.match(band)
+    if not m:
+        return band
+    lt, low, high = m.groups()
+    if lt or not high:
+        return f"jobs under {low} sqft"
+    return f"{low}–{high} sqft jobs"
+
+
 def _code_citations(state: dict) -> dict[str, str]:
     """takeoff_line_ref -> the OBC/bylaw clause that forced the line.
 
@@ -109,24 +156,49 @@ def _drop_redundant_unpriced(price_resolution: list[dict]) -> list[dict]:
                     and str(r.get("takeoff_line_ref")) in priced)]
 
 
-def _row_source(row: dict, citations: dict[str, str] | None = None) -> str:
-    """One short citation per §5.19 -- every priced line must show its
-    source, or be flagged unpriced with a reason."""
+def _row_detail(row: dict) -> str:
+    """The part of the Source cell that follows the document name: which row
+    of that document was matched, and how current it is."""
     source = row.get("price_source")
-    if source == "price_sheet":
-        text = row.get("source_detail") or "price sheet"
-    elif source == "allowance":
-        text = row.get("source_detail") or "tier allowance"
-    elif source == "labor_rate":
-        text = row.get("source_detail") or "labor rate"
-    elif source == "tavily":
-        text = f"web price check ({row.get('query', '')})"
-    elif source == "estimator_override":
-        text = "estimator-provided price"
-    else:
+    if source == "labor_rate":
+        # NOT source_detail -- that's the rate row's "includes" blurb, which
+        # describes the work rather than identifying the rate. The trade and
+        # the job-size band are what locate the row in the sheet.
+        trade = row.get("trade")
+        if trade:
+            band = _pretty_band(row.get("job_size_band", ""))
+            trade = str(trade).replace("_", " ")
+            return f"{trade}, {band}" if band else trade
+        return row.get("source_detail") or ""
+    if source == "tavily":
+        return row.get("query") or ""
+    if source == "estimator_override":
+        return "priced by hand during review"
+    # price_sheet / allowance: source_detail is already "<source> (updated
+    # <date>)" or "<source> (<tier> tier)" -- unwrap the parens so the whole
+    # cell reads as one phrase rather than nesting brackets inside brackets.
+    return (row.get("source_detail") or "").replace(" (", ", ").replace(")", "")
+
+
+def _row_source(row: dict, citations: dict[str, str] | None = None) -> str:
+    """One short citation per §5.19 -- every priced line must show the
+    document its price came from, or be flagged unpriced with a reason."""
+    document = _SOURCE_DOCUMENT.get(row.get("price_source"))
+    if document is None:
+        # Unpriced. Keep "estimator to price" lowercase and intact -- it is
+        # the phrase §18's exclusions disclaimer pairs with, and the wording
+        # the estimator is reading for when scanning the draft.
         clause = (citations or {}).get(str(row.get("takeoff_line_ref", "")))
-        base = f"estimator to price — {row.get('note') or 'no comparable on file'}"
-        return f"{base} [{clause}]" if clause else base
+        # price_fill's notes already end in "-- estimator to price"; with the
+        # phrase now leading the cell, keeping the tail said it twice.
+        note = _ESTIMATOR_TO_PRICE_TAIL.sub("", row.get("note") or "").strip()
+        base = f"**estimator to price** — {note or 'no comparable on file'}"
+        return f"{base} · **{clause}**" if clause else base
+
+    text = f"**{document}**"
+    detail = _row_detail(row)
+    if detail:
+        text += f" — {detail}"
     notes = []
     if row.get("rate_unverified"):
         notes.append("rate unverified")
@@ -134,9 +206,10 @@ def _row_source(row: dict, citations: dict[str, str] | None = None) -> str:
         notes.append("confirm on-site before finalizing")
     if row.get("note"):
         notes.append(row["note"])
-    text += f" ({'; '.join(notes)})" if notes else ""
+    if notes:
+        text += f" *({'; '.join(notes)})*"
     clause = (citations or {}).get(str(row.get("takeoff_line_ref", "")))
-    return f"{text} [{clause}]" if clause else text
+    return f"{text} · **{clause}**" if clause else text
 
 
 def _row_line(row: dict, citations: dict[str, str] | None = None) -> str:
@@ -386,7 +459,30 @@ def _render_code_verifications(codes_checklist: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _render_citations(retrieved: dict) -> str:
+def _price_data_citations(price_resolution: list[dict]) -> list[str]:
+    """The pricing sheets this quote's numbers actually came out of.
+
+    The retrieved-citation groups below cover what the *agent read*; without
+    this, the documents that set every dollar appeared nowhere in the
+    appendix. Only sheets a row in this quote resolved against are listed --
+    an unused sheet is not a source of this quote.
+    """
+    used = {doc for r in price_resolution
+            if (doc := _SOURCE_DOCUMENT.get(r.get("price_source")))}
+    out = []
+    for doc in sorted(used):
+        resolve = _SOURCE_DOCUMENT_PATH.get(doc)
+        if resolve is None:  # tavily / estimator override -- no file behind it
+            continue
+        try:
+            path = resolve()
+        except Exception:  # a misconfigured contractor must not break the draft
+            continue
+        out.append(f"- [price data] {doc} — {path.name}")
+    return out
+
+
+def _render_citations(retrieved: dict, price_resolution: list[dict] | None = None) -> str:
     seen: set[tuple[str, str]] = set()
     lines = ["## 24. Citations Appendix", ""]
     for doc_type, chunks in (retrieved or {}).items():
@@ -398,6 +494,7 @@ def _render_citations(retrieved: dict) -> str:
             lines.append(f"- [{doc_type}] {c['citation']}")
     if len(lines) == 2:
         lines.append("- No retrieved citations for this draft.")
+    lines.extend(_price_data_citations(price_resolution or []))
     return "\n".join(lines) + "\n"
 
 
@@ -454,7 +551,7 @@ def render_draft(state: dict, narrative: "schemas.DraftNarrative") -> str:
         _render_exclusions(),
         _render_terms(),
         _render_assumptions(slots, takeoff.get("assumptions") or []),
-        _render_citations(retrieved),
+        _render_citations(retrieved, price_resolution),
         _render_code_verifications(state.get("codes_checklist") or {}),
     ]
     return "\n".join(doc)
