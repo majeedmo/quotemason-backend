@@ -259,3 +259,60 @@ def test_unpriced_row_dropped_when_same_line_already_priced():
     assert len(kept) == 2
     assert [r["takeoff_line_ref"] for r in kept] == ["t6", "t9"]
     assert kept[1]["price_source"] == "unpriced"   # genuinely unpriced survives
+
+
+# --- Source column names its document (demo feedback, 2026-08-04) ----------
+
+
+def test_every_price_source_leads_with_its_document_name():
+    """The Source column used to open with a CSV *column value* ("supplier
+    list", "wood stud partitions + bulkheads") -- describing the number
+    without saying which sheet it came from."""
+    expected = {
+        "price_sheet": "**Contractor price sheet**",
+        "allowance": "**Material allowance table**",
+        "labor_rate": "**Labour rate sheet**",
+        "tavily": "**Live web price check**",
+        "estimator_override": "**Estimator override**",
+    }
+    for price_source, document in expected.items():
+        out = draft_render._row_source({"price_source": price_source})
+        assert out.startswith(document), f"{price_source} rendered as {out!r}"
+
+
+def test_labour_row_shows_its_trade_and_a_readable_job_size_band():
+    row = {"price_source": "labor_rate", "trade": "concrete_cutting_window",
+           "job_size_band": "medium_500_1000sqft", "rate_unverified": True,
+           "source_detail": "window opening cut/enlarge + lintel (medium_500_1000sqft)"}
+    out = draft_render._row_source(row)
+    assert "concrete cutting window" in out       # not concrete_cutting_window
+    assert "500–1000 sqft jobs" in out            # not medium_500_1000sqft
+    assert "rate unverified" in out               # disclosure survives
+
+
+def test_unknown_job_size_band_falls_through_instead_of_blanking_the_cell():
+    for band, want in [("any", "any job size"),
+                      ("small_lt_500sqft", "jobs under 500 sqft"),
+                      ("large_1000_2000sqft", "1000–2000 sqft jobs"),
+                      ("a_band_added_in_2027", "a_band_added_in_2027")]:
+        assert draft_render._pretty_band(band) == want
+
+
+def test_unpriced_row_keeps_lowercase_phrase_and_says_it_only_once():
+    """price_fill's notes already end in "-- estimator to price"; the phrase
+    now leads the cell, and §18's exclusions disclaimer pairs with the
+    lowercase wording."""
+    row = {"price_source": "unpriced",
+           "note": "no fresh sheet price (stale) — estimator to price"}
+    out = draft_render._row_source(row)
+    assert out.count("estimator to price") == 1
+    assert "**estimator to price** — no fresh sheet price (stale)" == out
+
+
+def test_citations_appendix_lists_only_the_price_sheets_actually_used():
+    rows = [{"price_source": "labor_rate"}, {"price_source": "unpriced"}]
+    draft = render_draft(_state(price_resolution=rows), NARRATIVE)
+    chunk = draft[draft.index("## 24. Citations Appendix"):]
+    assert "[price data] Labour rate sheet — labor-rates-DRAFT-v0.csv" in chunk
+    assert "Material allowance table" not in chunk   # nothing resolved against it
+    assert "Contractor price sheet" not in chunk

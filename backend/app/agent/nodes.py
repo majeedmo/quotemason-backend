@@ -856,6 +856,10 @@ def price_fill_node(state: AgentState) -> dict:
                       "sheet_unit": labor_row.unit,
                       "price_source": "labor_rate",
                       "source_detail": f"{labor_row.includes} ({labor_row.job_size_band})",
+                      # Carried separately from source_detail so the renderer
+                      # can show the band on its own terms without parsing it
+                      # back out of that string.
+                      "job_size_band": labor_row.job_size_band,
                       "rate_unverified": labor.is_rate_unverified(labor_row),
                       "site_dependent": labor.is_site_dependent(labor_row)}
                 if is_lump:
